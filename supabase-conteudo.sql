@@ -5,7 +5,7 @@
 
 -- Tabela de conteúdo editável via /admin/conteudo
 CREATE TABLE IF NOT EXISTS conteudo_site (
-  id TEXT PRIMARY KEY,            -- 'home' | 'sobre' | 'produto_historia'
+  id TEXT PRIMARY KEY,            -- 'home' | 'sobre' | 'processo' | 'contato' | 'produto_historia'
   dados JSONB NOT NULL DEFAULT '{}',
   atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS conteudo_site (
 INSERT INTO conteudo_site (id, dados) VALUES
   ('home',             '{}'),
   ('sobre',            '{}'),
+  ('processo',         '{}'),
+  ('contato',          '{}'),
   ('produto_historia', '{}')
 ON CONFLICT (id) DO NOTHING;
 

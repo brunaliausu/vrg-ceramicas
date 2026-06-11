@@ -1,42 +1,20 @@
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
+import { CONTEUDO_ADMIN_SECOES } from '@/lib/conteudoAdmin'
 
 async function getUltimasAtualizacoes() {
   try {
     const supabase = await createClient()
+    const ids = CONTEUDO_ADMIN_SECOES.map((s) => s.id)
     const { data } = await supabase
       .from('conteudo_site')
       .select('id, atualizado_em')
-      .in('id', ['home', 'sobre', 'produto_historia'])
+      .in('id', ids)
     return data ?? []
   } catch {
     return []
   }
 }
-
-const SECOES = [
-  {
-    id: 'home',
-    href: '/admin/conteudo/home',
-    titulo: 'Página Inicial',
-    descricao: 'Hero, apresentação da artista, coleção em destaque, marquee e galeria do Instagram.',
-    icone: '⌂',
-  },
-  {
-    id: 'sobre',
-    href: '/admin/conteudo/sobre',
-    titulo: 'Sobre a Artista',
-    descricao: 'Texto de apresentação, carta da artista, processo de criação e valores da marca.',
-    icone: '◌',
-  },
-  {
-    id: 'produto_historia',
-    href: '/admin/conteudo/produto-historia',
-    titulo: 'História do Produto',
-    descricao: 'Seção "A história desta peça" exibida no rodapé de cada página de produto.',
-    icone: '◎',
-  },
-]
 
 function formatData(iso: string) {
   return new Date(iso).toLocaleDateString('pt-BR', {
@@ -53,12 +31,12 @@ export default async function ConteudoIndexPage() {
       <div className="mb-8">
         <h1 className="font-serif text-3xl font-light text-carvao">Conteúdo do site</h1>
         <p className="font-sans text-xs text-muted mt-1">
-          Edite os textos e imagens de cada seção do site público.
+          Edite os textos e imagens das páginas públicas do menu principal.
         </p>
       </div>
 
       <div className="grid gap-4">
-        {SECOES.map((s) => {
+        {CONTEUDO_ADMIN_SECOES.map((s) => {
           const ult = atualizacoes.find((a) => a.id === s.id)
           return (
             <Link
@@ -88,10 +66,14 @@ export default async function ConteudoIndexPage() {
         })}
       </div>
 
-      <div className="mt-8 bg-areia border border-pedra p-5">
+      <div className="mt-8 bg-areia border border-pedra p-5 space-y-3">
         <p className="font-sans text-xs text-carvao/70 leading-relaxed">
           <strong className="text-carvao">Dica:</strong> Os textos e imagens editados aqui aparecem imediatamente no site. Para cadastrar peças (nome, preço, fotos), acesse{' '}
           <Link href="/admin/pecas" className="text-terracota underline">Peças & Estoque</Link>.
+        </p>
+        <p className="font-sans text-xs text-carvao/70 leading-relaxed">
+          A seção &ldquo;A história desta peça&rdquo; nas páginas de produto pode ser editada em{' '}
+          <Link href="/admin/conteudo/produto-historia" className="text-terracota underline">História do Produto</Link>.
         </p>
       </div>
     </div>

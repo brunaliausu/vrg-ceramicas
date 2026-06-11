@@ -4,14 +4,9 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useState } from 'react'
 import { cn } from '@/lib/utils'
+import { siteNavLinks } from '@/lib/siteNav'
 
-const links = [
-  { href: '/', label: 'Home' },
-  { href: '/loja', label: 'Loja' },
-  { href: '/sobre', label: 'A Artista' },
-  { href: '/processo', label: 'Processo' },
-  { href: '/contato', label: 'Contato' },
-]
+const links = siteNavLinks
 
 export function Header() {
   const pathname = usePathname()

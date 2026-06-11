@@ -15,7 +15,7 @@ export default async function ConteudoSobrePage() {
           ← Conteúdo do site
         </Link>
         <span className="text-pedra">/</span>
-        <h1 className="font-serif text-3xl font-light text-carvao">Sobre a Artista</h1>
+        <h1 className="font-serif text-3xl font-light text-carvao">A Artista</h1>
       </div>
       <SobreForm inicial={conteudo} />
     </div>

@@ -51,7 +51,7 @@ export function SobreForm({ inicial }: Props) {
     if (error) {
       setErro('Erro ao salvar. Tente novamente.')
     } else {
-      setSucesso('Conteúdo da página Sobre salvo com sucesso!')
+      setSucesso('Conteúdo de A Artista salvo com sucesso!')
       router.refresh()
     }
     setSalvando(false)
@@ -132,42 +132,64 @@ export function SobreForm({ inicial }: Props) {
         </div>
       </Secao>
 
-      {/* ── PROCESSO ── */}
-      <Secao titulo="Processo criativo — 4 etapas">
+      {/* ── TRAJETÓRIA ARTÍSTICA ── */}
+      <Secao titulo="Trajetória artística — momentos com foto e texto">
+        <div>
+          <label className={labelClass}>Lead (linha pequena acima do título)</label>
+          <input value={form.historias_lead} onChange={(e) => set('historias_lead', e.target.value)} className={inputClass} />
+        </div>
         <div>
           <label className={labelClass}>Título da seção</label>
-          <input value={form.processo_titulo} onChange={(e) => set('processo_titulo', e.target.value)} className={inputClass} />
+          <input value={form.historias_titulo} onChange={(e) => set('historias_titulo', e.target.value)} className={inputClass} />
+        </div>
+        <div>
+          <label className={labelClass}>Texto introdutório</label>
+          <textarea rows={3} value={form.historias_texto} onChange={(e) => set('historias_texto', e.target.value)} className={textareaClass} />
         </div>
 
-        {([1, 2, 3, 4] as const).map((n) => {
-          const tKey = `processo_p${n}_titulo` as keyof SobreConteudo
-          const txKey = `processo_p${n}_texto` as keyof SobreConteudo
-          const imgKey = `processo_p${n}_imagem` as keyof SobreConteudo
-          const nums = ['01 · Centrar', '02 · Modelar', '03 · Secar & esmaltar', '04 · Queimar']
+        {([
+          { n: 1, exemplo: 'Arquitetura' },
+          { n: 2, exemplo: 'Pintura' },
+          { n: 3, exemplo: 'Cerâmica' },
+        ] as const).map(({ n, exemplo }) => {
+          const tagKey = `historia${n}_tag` as keyof SobreConteudo
+          const tKey = `historia${n}_titulo` as keyof SobreConteudo
+          const txKey = `historia${n}_texto` as keyof SobreConteudo
+          const imgKey = `historia${n}_imagem` as keyof SobreConteudo
           return (
             <div key={n} className="border border-pedra p-4 space-y-3">
-              <p className="font-sans text-xs font-medium text-terracota">{nums[n - 1]}</p>
+              <p className="font-sans text-xs font-medium text-terracota">Momento {n} — ex.: {exemplo}</p>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className={labelClass}>Título da etapa</label>
+                  <label className={labelClass}>Etiqueta (ex.: Arquitetura, Pintura)</label>
+                  <input
+                    value={form[tagKey] as string}
+                    onChange={(e) => set(tagKey, e.target.value)}
+                    className={inputClass}
+                    placeholder={exemplo}
+                  />
+                </div>
+                <div>
+                  <label className={labelClass}>Título do momento</label>
                   <input
                     value={form[tKey] as string}
                     onChange={(e) => set(tKey, e.target.value)}
                     className={inputClass}
                   />
                 </div>
-                <div>
-                  <label className={labelClass}>Descrição</label>
-                  <input
-                    value={form[txKey] as string}
-                    onChange={(e) => set(txKey, e.target.value)}
-                    className={inputClass}
-                  />
-                </div>
+              </div>
+              <div>
+                <label className={labelClass}>Texto</label>
+                <textarea
+                  rows={4}
+                  value={form[txKey] as string}
+                  onChange={(e) => set(txKey, e.target.value)}
+                  className={textareaClass}
+                />
               </div>
               <ConteudoImageUpload
-                label={`Foto da etapa ${n}`}
-                hint="Proporção 1:1 ou 4:3."
+                label={`Foto — momento ${n}`}
+                hint="Proporção 4:5 (retrato). Obras, projetos, ateliê ou registros pessoais."
                 value={form[imgKey] as string}
                 onChange={(url) => set(imgKey, url)}
               />
@@ -217,7 +239,7 @@ export function SobreForm({ inicial }: Props) {
           disabled={salvando}
           className="bg-carvao text-cru font-sans text-sm px-8 py-3 hover:bg-carvao/85 transition-colors disabled:opacity-50"
         >
-          {salvando ? 'Salvando...' : 'Salvar alterações de Sobre'}
+          {salvando ? 'Salvando...' : 'Salvar alterações de A Artista'}
         </button>
         <button
           type="button"

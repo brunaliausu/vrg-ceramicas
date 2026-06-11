@@ -1,6 +1,7 @@
 import Image from 'next/image'
 import Link from 'next/link'
 import { linkContato } from '@/lib/whatsapp'
+import { siteNavLinks } from '@/lib/siteNav'
 
 export function Footer() {
   return (
@@ -25,12 +26,7 @@ export function Footer() {
           <div>
             <p className="font-sans text-[10px] tracking-widest uppercase text-cru/40 mb-4">Navegação</p>
             <nav className="flex flex-col gap-2">
-              {[
-                { href: '/loja', label: 'Loja' },
-                { href: '/sobre', label: 'Sobre a VRG' },
-                { href: '/processo', label: 'O Processo' },
-                { href: '/contato', label: 'Contato' },
-              ].map((link) => (
+              {siteNavLinks.map((link) => (
                 <Link
                   key={link.href}
                   href={link.href}

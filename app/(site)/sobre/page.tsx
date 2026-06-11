@@ -2,9 +2,10 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import Image from 'next/image'
 import { getSobreConteudo } from '@/lib/conteudo'
+import { ArtistaHistorias } from '@/components/sections/ArtistaHistorias'
 
 export const metadata: Metadata = {
-  title: 'Sobre a Artista',
+  title: 'A Artista',
   description:
     'Conheça a história da VRG Cerâmicas Artesanais — a ceramista, o ateliê e a paixão pelo feito à mão.',
 }
@@ -47,13 +48,6 @@ function CmsImage({
 
 export default async function SobrePage() {
   const c = await getSobreConteudo()
-
-  const processoPassos = [
-    { num: '01', titulo: c.processo_p1_titulo, texto: c.processo_p1_texto, imagem: c.processo_p1_imagem },
-    { num: '02', titulo: c.processo_p2_titulo, texto: c.processo_p2_texto, imagem: c.processo_p2_imagem },
-    { num: '03', titulo: c.processo_p3_titulo, texto: c.processo_p3_texto, imagem: c.processo_p3_imagem },
-    { num: '04', titulo: c.processo_p4_titulo, texto: c.processo_p4_texto, imagem: c.processo_p4_imagem },
-  ]
 
   const valores = [
     { titulo: c.valores_1_titulo, texto: c.valores_1_texto },
@@ -117,40 +111,7 @@ export default async function SobrePage() {
         </p>
       </section>
 
-      {/* ── PROCESSO ──────────────────────────────────────── */}
-      <section className="bg-areia py-24">
-        <div className="max-w-6xl mx-auto px-6">
-          <div className="text-center mb-16">
-            <p className="font-sans text-[10px] tracking-[0.32em] uppercase text-terracota mb-3">
-              Do barro ao forno
-            </p>
-            <h2
-              className="font-serif font-light text-carvao"
-              style={{ fontSize: 'clamp(32px, 4.6vw, 56px)' }}
-            >
-              {c.processo_titulo}
-            </h2>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-8">
-            {processoPassos.map((p) => (
-              <div key={p.num}>
-                {p.imagem ? (
-                  <div className="relative aspect-square rounded-xl overflow-hidden mb-5 bg-cru">
-                    <CmsImage src={p.imagem} alt={p.titulo} fill className="object-cover" sizes="25vw" />
-                  </div>
-                ) : (
-                  <div className="aspect-square rounded-xl bg-cru mb-5 flex items-center justify-center">
-                    <span className="font-serif text-4xl text-terracota/30">{p.num}</span>
-                  </div>
-                )}
-                <p className="font-serif italic text-terracota text-2xl leading-none mb-3">{p.num}</p>
-                <h3 className="font-serif text-xl text-carvao mb-2">{p.titulo}</h3>
-                <p className="font-sans text-xs text-muted leading-relaxed">{p.texto}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
+      <ArtistaHistorias conteudo={c} />
 
       {/* ── VALORES ───────────────────────────────────────── */}
       <section className="max-w-6xl mx-auto px-6 py-24">

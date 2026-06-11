@@ -177,40 +177,6 @@ export function HomeForm({ inicial }: Props) {
         />
       </Secao>
 
-      {/* ── INSTAGRAM ── */}
-      <Secao titulo="Galeria / Instagram">
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className={labelClass}>Lead</label>
-            <input value={form.instagram_lead} onChange={(e) => set('instagram_lead', e.target.value)} className={inputClass} />
-          </div>
-          <div>
-            <label className={labelClass}>Título da seção</label>
-            <input value={form.instagram_titulo} onChange={(e) => set('instagram_titulo', e.target.value)} className={inputClass} />
-          </div>
-        </div>
-        <div>
-          <label className={labelClass}>Handle do Instagram (com @)</label>
-          <input value={form.instagram_handle} onChange={(e) => set('instagram_handle', e.target.value)} className={inputClass} />
-        </div>
-        <div>
-          <label className={labelClass}>Texto breve (acima das fotos)</label>
-          <textarea
-            rows={3}
-            value={form.instagram_texto}
-            onChange={(e) => set('instagram_texto', e.target.value)}
-            className={textareaClass}
-            placeholder="Aqui não existem moldes ou pressa, só a terra, o fogo, o tempo..."
-          />
-        </div>
-        <div className="grid grid-cols-2 gap-4">
-          <ConteudoImageUpload label="Foto galeria 1" value={form.instagram_img1} onChange={(url) => set('instagram_img1', url)} />
-          <ConteudoImageUpload label="Foto galeria 2" value={form.instagram_img2} onChange={(url) => set('instagram_img2', url)} />
-          <ConteudoImageUpload label="Foto galeria 3" value={form.instagram_img3} onChange={(url) => set('instagram_img3', url)} />
-          <ConteudoImageUpload label="Foto galeria 4" value={form.instagram_img4} onChange={(url) => set('instagram_img4', url)} />
-        </div>
-      </Secao>
-
       {/* ── SUBMIT ── */}
       <div className="flex items-center gap-4 pt-2 border-t border-pedra">
         <button

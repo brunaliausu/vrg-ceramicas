@@ -110,19 +110,22 @@ export interface SobreConteudo {
   carta_quote: string
   carta_assinatura: string
   carta_cargo: string
-  processo_titulo: string
-  processo_p1_titulo: string
-  processo_p1_texto: string
-  processo_p1_imagem: string
-  processo_p2_titulo: string
-  processo_p2_texto: string
-  processo_p2_imagem: string
-  processo_p3_titulo: string
-  processo_p3_texto: string
-  processo_p3_imagem: string
-  processo_p4_titulo: string
-  processo_p4_texto: string
-  processo_p4_imagem: string
+  /** Seção: trajetória artística além da cerâmica */
+  historias_lead: string
+  historias_titulo: string
+  historias_texto: string
+  historia1_tag: string
+  historia1_titulo: string
+  historia1_texto: string
+  historia1_imagem: string
+  historia2_tag: string
+  historia2_titulo: string
+  historia2_texto: string
+  historia2_imagem: string
+  historia3_tag: string
+  historia3_titulo: string
+  historia3_texto: string
+  historia3_imagem: string
   valores_1_titulo: string
   valores_1_texto: string
   valores_2_titulo: string
@@ -141,8 +144,49 @@ export interface ProdutoHistoriaConteudo {
   imagem: string
 }
 
+export interface ProcessoConteudo {
+  hero_lead: string
+  hero_titulo: string
+  hero_texto: string
+  etapa1_titulo: string
+  etapa1_texto: string
+  etapa1_imagem: string
+  etapa2_titulo: string
+  etapa2_texto: string
+  etapa2_imagem: string
+  etapa3_titulo: string
+  etapa3_texto: string
+  etapa3_imagem: string
+  etapa4_titulo: string
+  etapa4_texto: string
+  etapa4_imagem: string
+  etapa5_titulo: string
+  etapa5_texto: string
+  etapa5_imagem: string
+  etapa6_titulo: string
+  etapa6_texto: string
+  etapa6_imagem: string
+  nota_quote: string
+  nota_texto: string
+}
+
+export interface ContatoConteudo {
+  hero_lead: string
+  hero_titulo: string
+  hero_texto: string
+  form_titulo: string
+  whatsapp_rotulo: string
+  whatsapp_texto: string
+  instagram_rotulo: string
+  instagram_handle: string
+  envios_titulo: string
+  envios_texto: string
+  encomendas_titulo: string
+  encomendas_texto: string
+}
+
 export interface ConteudoSite {
   id: string
-  dados: HomeConteudo | SobreConteudo | ProdutoHistoriaConteudo
+  dados: HomeConteudo | SobreConteudo | ProdutoHistoriaConteudo | ProcessoConteudo | ContatoConteudo
   atualizado_em: string
 }

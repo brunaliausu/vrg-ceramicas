@@ -1,9 +1,9 @@
 import Link from 'next/link'
-import { getHomeConteudo } from '@/lib/conteudo'
-import { HomeForm } from './HomeForm'
+import { getProcessoConteudo } from '@/lib/conteudo'
+import { ProcessoForm } from './ProcessoForm'
 
-export default async function ConteudoHomePage() {
-  const conteudo = await getHomeConteudo()
+export default async function ConteudoProcessoPage() {
+  const conteudo = await getProcessoConteudo()
 
   return (
     <div>
@@ -15,9 +15,9 @@ export default async function ConteudoHomePage() {
           ← Conteúdo do site
         </Link>
         <span className="text-pedra">/</span>
-        <h1 className="font-serif text-3xl font-light text-carvao">Home</h1>
+        <h1 className="font-serif text-3xl font-light text-carvao">Processo</h1>
       </div>
-      <HomeForm inicial={conteudo} />
+      <ProcessoForm inicial={conteudo} />
     </div>
   )
 }
