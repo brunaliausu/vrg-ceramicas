@@ -1,0 +1,86 @@
+@import "tailwindcss";
+
+@theme {
+  /* Paleta VRG */
+  --color-cru: #F5F1EA;
+  --color-areia: #EAE3D9;
+  --color-carvao: #2B2926;
+  --color-terracota: #B08968;
+  --color-argila: #C9A88B;
+  --color-pedra: #D6CFC4;
+  --color-muted: #8A7E75;
+
+  /* Tipografia */
+  --font-serif: var(--font-cormorant), Georgia, "Times New Roman", serif;
+  --font-sans: var(--font-inter), system-ui, sans-serif;
+  --font-caveat: var(--font-caveat), cursive;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: #F5F1EA;
+  color: #2B2926;
+  font-family: var(--font-inter), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background-color: #C9A88B;
+  color: #2B2926;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #EAE3D9;
+}
+::-webkit-scrollbar-thumb {
+  background: #D6CFC4;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #B08968;
+}
+
+/* Admin body override */
+.admin-body {
+  background-color: #FAFAF8;
+}
+
+/* Marquee animation */
+@keyframes marquee-scroll {
+  to { transform: translateX(-50%); }
+}
+.animate-marquee {
+  display: flex;
+  white-space: nowrap;
+  animation: marquee-scroll 30s linear infinite;
+}
+
+/* Grain overlay (Proposta A) */
+.grain-overlay::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9;
+  opacity: 0.032;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Caveat font utility */
+.font-caveat {
+  font-family: var(--font-caveat), cursive;
+}
