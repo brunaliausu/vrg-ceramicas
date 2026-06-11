@@ -88,6 +88,8 @@ export interface HomeConteudo {
   marquee_termos: string
   instagram_lead: string
   instagram_titulo: string
+  /** Texto breve acima da galeria de fotos */
+  instagram_texto: string
   instagram_handle: string
   instagram_img1: string
   instagram_img2: string

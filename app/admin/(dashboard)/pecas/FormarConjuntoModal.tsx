@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 
 interface Props {
   pieceCount: number
+  suggestedCodigo?: string
   externalError?: string | null
   onConfirm: (codigo: string, nome: string) => void
   onCancel: () => void
@@ -14,8 +15,8 @@ const INP =
   'w-full border border-pedra px-3 py-2 font-sans text-sm text-carvao placeholder:text-muted/40 focus:outline-none focus:border-terracota bg-white'
 const LBL = 'font-sans text-[9px] tracking-widest uppercase text-muted block mb-1'
 
-export function FormarConjuntoModal({ pieceCount, externalError, onConfirm, onCancel }: Props) {
-  const [codigo, setCodigo] = useState('')
+export function FormarConjuntoModal({ pieceCount, suggestedCodigo = '', externalError, onConfirm, onCancel }: Props) {
+  const [codigo, setCodigo] = useState(suggestedCodigo)
   const [nome, setNome] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [mounted, setMounted] = useState(false)
@@ -49,7 +50,7 @@ export function FormarConjuntoModal({ pieceCount, externalError, onConfirm, onCa
               type="text"
               value={codigo}
               onChange={(e) => { setCodigo(e.target.value); setError(null) }}
-              placeholder="Ex: CJ-001"
+              placeholder="Ex: C3"
               className={`${INP} font-mono`}
               autoFocus
             />

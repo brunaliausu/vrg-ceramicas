@@ -16,7 +16,9 @@ import {
   categoriaToPrefix,
   compareCodigoDisplay,
   inferPrefixFromCodigos,
+  parsePecaCodigoLoose,
   suggestCodigoForCategoria,
+  suggestNextConjuntoCodigo,
   suggestNextPecaCodigo,
   normalizeCodigoKey,
   validateConjuntoCodigoUnique,
@@ -29,6 +31,140 @@ function Thumb({ src, alt, className }: { src: string; alt: string; className?: 
     return <img src={src} alt={alt} className={`absolute inset-0 w-full h-full object-cover ${className ?? ''}`} />
   }
   return <NextImage src={src} alt={alt} fill sizes="80px" className={`object-cover ${className ?? ''}`} />
+}
+
+function getMergedFotoSrcs(existing: string[], pending: string[], novaPrincipal: boolean): string[] {
+  if (novaPrincipal && pending.length > 0) return [...pending, ...existing]
+  return [...existing, ...pending]
+}
+
+function getPecaFotoSrcs(row: PecaRow): string[] {
+  return getMergedFotoSrcs(row.fotos, row.fotosNovas.map((f) => f.preview), row.novaPrincipal)
+}
+
+function getConjuntoFotoSrcs(cdata: ConjuntoData): string[] {
+  return getMergedFotoSrcs(cdata.fotos, cdata.fotosNovas.map((f) => f.preview), cdata.novaPrincipal)
+}
+
+function gridIndexToMergedIndex(
+  gridIndex: number,
+  isNew: boolean,
+  existingCount: number,
+  pendingCount: number,
+  novaPrincipal: boolean,
+): number {
+  if (isNew) return novaPrincipal ? gridIndex : existingCount + gridIndex
+  return novaPrincipal ? pendingCount + gridIndex : gridIndex
+}
+
+function pecaFotoTitulo(row: PecaRow): string {
+  return [row.codigo, row.nome].filter(Boolean).join(' — ') || 'Peça'
+}
+
+interface FotoPreviewState {
+  fotos: string[]
+  initialIndex: number
+  titulo?: string
+  onManage?: () => void
+}
+
+function FotoPreviewModal({ fotos, initialIndex, titulo, onClose, onManage }: FotoPreviewState & { onClose: () => void }) {
+  const [index, setIndex] = useState(initialIndex)
+  const src = fotos[index]
+
+  useEffect(() => {
+    setIndex(initialIndex)
+  }, [initialIndex, fotos])
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+      if (e.key === 'ArrowLeft') setIndex((i) => Math.max(0, i - 1))
+      if (e.key === 'ArrowRight') setIndex((i) => Math.min(fotos.length - 1, i + 1))
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [fotos.length, onClose])
+
+  if (!src) return null
+
+  return (
+    <div
+      className="fixed inset-0 z-[130] flex flex-col items-center justify-center bg-black/85 p-4"
+      onMouseDown={onClose}
+    >
+      <div className="w-full max-w-4xl flex flex-col items-center gap-3" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="w-full flex items-center justify-between gap-3 text-cru">
+          <div className="min-w-0">
+            {titulo && <p className="font-sans text-sm truncate">{titulo}</p>}
+            {fotos.length > 1 && (
+              <p className="font-sans text-[10px] text-cru/70 mt-0.5">
+                Foto {index + 1} de {fotos.length}
+              </p>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="shrink-0 text-cru/80 hover:text-cru text-3xl leading-none w-9 h-9 flex items-center justify-center"
+            aria-label="Fechar"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="relative w-full flex items-center justify-center min-h-[200px] max-h-[78vh]">
+          {fotos.length > 1 && (
+            <button
+              type="button"
+              disabled={index === 0}
+              onClick={() => setIndex((i) => Math.max(0, i - 1))}
+              className="absolute left-0 z-10 w-10 h-10 rounded-full bg-black/50 text-cru hover:bg-black/70 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center"
+              aria-label="Foto anterior"
+            >
+              ‹
+            </button>
+          )}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={src}
+            alt={titulo ? `Foto — ${titulo}` : 'Foto ampliada'}
+            className="max-w-full max-h-[78vh] w-auto h-auto object-contain rounded-sm shadow-2xl"
+          />
+          {fotos.length > 1 && (
+            <button
+              type="button"
+              disabled={index === fotos.length - 1}
+              onClick={() => setIndex((i) => Math.min(fotos.length - 1, i + 1))}
+              className="absolute right-0 z-10 w-10 h-10 rounded-full bg-black/50 text-cru hover:bg-black/70 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center"
+              aria-label="Próxima foto"
+            >
+              ›
+            </button>
+          )}
+        </div>
+
+        <div className="flex items-center gap-3">
+          {onManage && (
+            <button
+              type="button"
+              onClick={() => { onClose(); onManage() }}
+              className="font-sans text-xs tracking-wide uppercase px-4 py-2 border border-cru/40 text-cru hover:bg-cru/10 transition-colors"
+            >
+              Gerenciar fotos
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            className="font-sans text-xs tracking-wide uppercase px-4 py-2 bg-cru text-carvao hover:bg-cru/90 transition-colors"
+          >
+            Fechar
+          </button>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -660,19 +796,72 @@ function emptyRow(conjuntoId?: string, conjuntoCodigo?: string, conjuntoNome?: s
   }
 }
 
+function suggestNextPecaCodigoFromSource(source: PecaRow, allCodigos: string[]): string {
+  if (source.categoria) {
+    const fromCat = suggestCodigoForCategoria(source.categoria, allCodigos)
+    if (fromCat) return fromCat
+  }
+  const parsed = parsePecaCodigoLoose(source.codigo)
+  const prefix = parsed?.prefix ?? inferPrefixFromCodigos([source.codigo])
+  return suggestNextPecaCodigo(prefix, allCodigos)
+}
+
+function clonePecaAsNew(source: PecaRow, overrides: Partial<PecaRow>): PecaRow {
+  return {
+    ...source,
+    id: crypto.randomUUID(),
+    fotos: [],
+    fotosNovas: [],
+    novaPrincipal: false,
+    isNew: true,
+    dirty: true,
+    exibir_no_site: false,
+    destaque_home: false,
+    status: source.status === 'vendido' ? '' : source.status,
+    ...EMPTY_VENDA,
+    ...overrides,
+  }
+}
+
+function cloneConjuntoDataAsNew(source: ConjuntoData): ConjuntoData {
+  return {
+    ...source,
+    fotos: [],
+    fotosNovas: [],
+    novaPrincipal: false,
+    exibir_no_site: false,
+    destaque_home: false,
+    status: source.status === 'vendido' ? '' : source.status,
+    dirty: true,
+  }
+}
+
 // ─── Style constants ──────────────────────────────────────────────────────────
 
-const TH = 'font-sans text-[10px] tracking-widest uppercase text-muted py-3 px-3 whitespace-nowrap'
-const numInput = 'bg-white border border-pedra px-2 py-1.5 font-sans text-sm text-carvao placeholder:text-muted/30 focus:outline-none focus:border-terracota transition-colors text-right w-24'
-const textInput = 'w-full bg-transparent border-b border-transparent hover:border-pedra focus:border-terracota font-sans text-sm text-carvao placeholder:text-muted/30 focus:outline-none transition-colors py-0.5'
+const TH = 'font-sans text-[9px] tracking-widest uppercase text-muted py-2 px-2 whitespace-nowrap'
+const numInput = 'bg-white border border-pedra px-1.5 py-1 font-sans text-xs text-carvao placeholder:text-muted/30 focus:outline-none focus:border-terracota transition-colors text-right w-full max-w-[5.5rem]'
+const textInput = 'w-full bg-transparent border-b border-transparent hover:border-pedra focus:border-terracota font-sans text-xs text-carvao placeholder:text-muted/30 focus:outline-none transition-colors py-0.5'
 const selectCls = 'bg-white border border-pedra px-2 py-1.5 font-sans text-sm text-carvao focus:outline-none focus:border-terracota transition-colors appearance-none cursor-pointer'
+const tableSelectCls = 'w-full bg-white border border-pedra px-1.5 py-1 font-sans text-[11px] text-carvao focus:outline-none focus:border-terracota transition-colors appearance-none cursor-pointer min-w-0'
 
 // Visual do conjunto — paleta VRG (terracota / areia / carvao)
 const CONJ_HEADER_ROW = 'border-t-2 border-terracota/35 border-b border-terracota/15 bg-[#EDE8DF]'
-const CONJ_HEADER_ROW_DIRTY = 'border-t-2 border-terracota/50 border-b border-terracota/25 bg-argila/20'
+const CONJ_HEADER_ROW_DIRTY = 'border-t-2 border-terracota/50 border-b border-terracota/25 bg-[#E5DACE]'
 const CONJ_CHILD_ROW = 'bg-areia/30 border-l-[3px] border-l-terracota/40'
 const CONJ_CHILD_ROW_HOVER = 'hover:bg-areia/50'
-const CONJ_CHILD_INDENT = 'pl-6'
+const CONJ_CHILD_INDENT = 'pl-4'
+
+const STICKY_CHECKBOX = 'sticky left-0 z-20'
+const STICKY_FOTO = 'sticky left-10 z-20 shadow-[4px_0_8px_-2px_rgba(43,41,38,0.08)] w-[72px]'
+
+function stickyCellBg(row: PecaRow, inConjunto: boolean, effectiveFenearte: boolean): string {
+  if (row.dirty) return 'bg-[#F7F2ED]'
+  if (inConjunto) {
+    return effectiveFenearte ? 'bg-[#FDF8EF] group-hover:bg-[#FCF3E4]' : 'bg-[#EEE9E2] group-hover:bg-[#E8E2DA]'
+  }
+  if (row.fenearte) return 'bg-[#FFF8EB] group-hover:bg-[#FFF3D6]'
+  return 'bg-white group-hover:bg-[#F5F1EA]'
+}
 
 const STATUS_OPTIONS = [
   { value: 'disponivel',    label: 'Disponível',    dot: 'bg-green-500' },
@@ -795,9 +984,10 @@ interface FotoModalProps {
   onRemoveExisting: (i: number) => void
   onRemoveNew: (i: number) => void
   onSetPrincipal: (i: number, isNew: boolean) => void
+  onPreviewPhoto?: (index: number) => void
 }
 
-function FotoModal({ titulo, fotos, fotosNovas, novaPrincipal, onClose, onAddFiles, onRemoveExisting, onRemoveNew, onSetPrincipal }: FotoModalProps) {
+function FotoModal({ titulo, fotos, fotosNovas, novaPrincipal, onClose, onAddFiles, onRemoveExisting, onRemoveNew, onSetPrincipal, onPreviewPhoto }: FotoModalProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const totalFotos = fotos.length + fotosNovas.length
 
@@ -817,9 +1007,17 @@ function FotoModal({ titulo, fotos, fotosNovas, novaPrincipal, onClose, onAddFil
             return (
               <div key={`ex-${i}`} className="relative aspect-square bg-areia group/img rounded-sm overflow-hidden">
                 <Thumb src={src} alt={`Foto ${i + 1}`} />
-                {isPrincipal && <span className="absolute bottom-0 inset-x-0 bg-carvao/75 text-cru font-sans text-[8px] text-center py-0.5 leading-tight">Principal</span>}
-                <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/40 transition-colors" />
-                <div className="absolute inset-0 flex items-center justify-center gap-1 opacity-0 group-hover/img:opacity-100 transition-opacity">
+                {onPreviewPhoto && (
+                  <button
+                    type="button"
+                    onClick={() => onPreviewPhoto(gridIndexToMergedIndex(i, false, fotos.length, fotosNovas.length, novaPrincipal))}
+                    className="absolute inset-0 z-[1] cursor-zoom-in"
+                    aria-label={`Ampliar foto ${i + 1}`}
+                  />
+                )}
+                {isPrincipal && <span className="absolute bottom-0 inset-x-0 z-[2] bg-carvao/75 text-cru font-sans text-[8px] text-center py-0.5 leading-tight pointer-events-none">Principal</span>}
+                <div className="absolute inset-0 z-[2] bg-black/0 group-hover/img:bg-black/40 transition-colors pointer-events-none" />
+                <div className="absolute inset-0 z-[3] flex items-center justify-center gap-1 opacity-0 group-hover/img:opacity-100 transition-opacity">
                   {!isPrincipal && <button type="button" onClick={() => onSetPrincipal(i, false)} className="bg-white/90 text-carvao hover:bg-terracota hover:text-cru font-sans text-[9px] px-1.5 py-1">★</button>}
                   <button type="button" onClick={() => onRemoveExisting(i)} className="bg-red-500 text-white text-xs w-6 h-6 flex items-center justify-center">×</button>
                 </div>
@@ -831,10 +1029,18 @@ function FotoModal({ titulo, fotos, fotosNovas, novaPrincipal, onClose, onAddFil
             return (
               <div key={`new-${i}`} className="relative aspect-square bg-areia group/img rounded-sm overflow-hidden">
                 <Thumb src={f.preview} alt={`Nova ${i + 1}`} />
-                {!isPrincipal && <span className="absolute top-0.5 left-0.5 bg-terracota text-cru font-sans text-[7px] px-1 py-0.5">Nova</span>}
-                {isPrincipal && <span className="absolute bottom-0 inset-x-0 bg-carvao/75 text-cru font-sans text-[8px] text-center py-0.5 leading-tight">Principal</span>}
-                <div className="absolute inset-0 bg-black/0 group-hover/img:bg-black/40 transition-colors" />
-                <div className="absolute inset-0 flex items-center justify-center gap-1 opacity-0 group-hover/img:opacity-100 transition-opacity">
+                {onPreviewPhoto && (
+                  <button
+                    type="button"
+                    onClick={() => onPreviewPhoto(gridIndexToMergedIndex(i, true, fotos.length, fotosNovas.length, novaPrincipal))}
+                    className="absolute inset-0 z-[1] cursor-zoom-in"
+                    aria-label={`Ampliar foto nova ${i + 1}`}
+                  />
+                )}
+                {!isPrincipal && <span className="absolute top-0.5 left-0.5 z-[2] bg-terracota text-cru font-sans text-[7px] px-1 py-0.5 pointer-events-none">Nova</span>}
+                {isPrincipal && <span className="absolute bottom-0 inset-x-0 z-[2] bg-carvao/75 text-cru font-sans text-[8px] text-center py-0.5 leading-tight pointer-events-none">Principal</span>}
+                <div className="absolute inset-0 z-[2] bg-black/0 group-hover/img:bg-black/40 transition-colors pointer-events-none" />
+                <div className="absolute inset-0 z-[3] flex items-center justify-center gap-1 opacity-0 group-hover/img:opacity-100 transition-opacity">
                   {!isPrincipal && <button type="button" onClick={() => onSetPrincipal(i, true)} className="bg-white/90 text-carvao hover:bg-terracota hover:text-cru font-sans text-[9px] px-1.5 py-1">★</button>}
                   <button type="button" onClick={() => onRemoveNew(i)} className="bg-red-500 text-white text-xs w-6 h-6 flex items-center justify-center">×</button>
                 </div>
@@ -856,8 +1062,9 @@ function FotoModal({ titulo, fotos, fotosNovas, novaPrincipal, onClose, onAddFil
 
 // ─── Conjunto modal ───────────────────────────────────────────────────────────
 
-function ConjuntoModal({ row, existingConjuntos, onClose, onCreate, onJoin, onLeave }: {
+function ConjuntoModal({ row, existingConjuntos, suggestedCodigo, onClose, onCreate, onJoin, onLeave }: {
   row: PecaRow; existingConjuntos: ConjuntoInfo[]
+  suggestedCodigo: string
   onClose: () => void
   onCreate: (rowId: string, codigo: string, nome: string) => string | null
   onJoin: (rowId: string, conjuntoId: string) => void
@@ -866,8 +1073,14 @@ function ConjuntoModal({ row, existingConjuntos, onClose, onCreate, onJoin, onLe
   const isInConjunto = !!row.conjunto_id
   const othersAvailable = existingConjuntos.filter((c) => c.id !== row.conjunto_id)
   const [tab, setTab] = useState<'new' | 'existing'>(!isInConjunto && othersAvailable.length > 0 ? 'existing' : 'new')
-  const [codigo, setCodigo] = useState('')
+  const [codigo, setCodigo] = useState(suggestedCodigo)
   const [nome, setNome] = useState('')
+
+  useEffect(() => {
+    if (tab === 'new' && suggestedCodigo && !codigo.trim()) {
+      setCodigo(suggestedCodigo)
+    }
+  }, [tab, suggestedCodigo, codigo])
   const [createError, setCreateError] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState(othersAvailable[0]?.id ?? '')
   const mi = 'w-full border border-pedra px-3 py-2 font-sans text-sm text-carvao placeholder:text-muted/40 focus:outline-none focus:border-terracota transition-colors bg-white'
@@ -923,7 +1136,7 @@ function ConjuntoModal({ row, existingConjuntos, onClose, onCreate, onJoin, onLe
               <div className="space-y-3">
                 <div>
                   <label className="font-sans text-[9px] tracking-widest uppercase text-muted block mb-1">Código do conjunto *</label>
-                  <input type="text" value={codigo} onChange={(e) => setCodigo(e.target.value)} placeholder="Ex: SET-001" className={mi} autoFocus />
+                  <input type="text" value={codigo} onChange={(e) => setCodigo(e.target.value)} placeholder="Ex: C3" className={`${mi} font-mono`} autoFocus />
                 </div>
                 <div>
                   <label className="font-sans text-[9px] tracking-widest uppercase text-muted block mb-1">Nome (opcional)</label>
@@ -1434,7 +1647,7 @@ const MODAL_SEL_FULL = `${selectCls} w-full`
 const MODAL_LBL = 'font-sans text-[9px] tracking-widest uppercase text-muted block mb-1.5'
 
 function PecaModalPieceFields({
-  piece, index, inConjunto, canRemove, highlighted, statusValue, codigoError, highlightPublicationFields, onUpdate, onCategoriaChange, onCodigoChange, onCodigoCommit, onStatusChange, onOpenFotos, onAddFotos, onRemove,
+  piece, index, inConjunto, canRemove, highlighted, statusValue, codigoError, highlightPublicationFields, onUpdate, onCategoriaChange, onCodigoChange, onCodigoCommit, onStatusChange, onOpenFotos, onPreviewFoto, onAddFotos, onRemove,
   margemVendaConfig,
   custoHoraFixo, custoHoraMO,
   embalagemItems, argilaItems, esmalteItems, engobeItems, tintaItems, biscoitoItems, queimaAltaItems,
@@ -1453,6 +1666,7 @@ function PecaModalPieceFields({
   onCodigoCommit: (prev: string) => void
   onStatusChange: (status: string) => void
   onOpenFotos: () => void
+  onPreviewFoto: () => void
   onAddFotos: (files: FileList) => void
   onRemove?: () => void
   margemVendaConfig: number
@@ -1519,8 +1733,9 @@ function PecaModalPieceFields({
                 onOpenFotos()
               }
             }} />
-          <button type="button" onClick={() => { if (totalFotos > 0) onOpenFotos(); else fileRef.current?.click() }}
-            className={`relative w-[72px] h-[72px] overflow-hidden flex items-center justify-center shrink-0 border transition-colors ${
+          <button type="button" onClick={() => { if (totalFotos > 0) onPreviewFoto(); else fileRef.current?.click() }}
+            title={totalFotos > 0 ? 'Ver foto ampliada' : 'Adicionar foto'}
+            className={`relative w-[72px] h-[72px] overflow-hidden flex items-center justify-center shrink-0 border transition-colors cursor-zoom-in ${
               inConjunto ? 'bg-white border-pedra/50 hover:border-terracota/50' : 'bg-areia border-pedra hover:border-terracota'
             }`}>
             {principalSrc ? (
@@ -1721,11 +1936,12 @@ function PecaModalPieceFields({
 
 function PecaDetalhesModal({
   row, allRows, onClose, onUpdatePiece, onStatusChangePiece, onConjuntoClick,
-  onOpenPieceFotos, onAddPieceFotos, onAddAnotherPiece, onRemovePiece,
+  onOpenPieceFotos, onAddPieceFotos, onPreviewPieceFotos, onAddAnotherPiece, onRemovePiece,
   lockConjunto, conjuntoData,
   onEnableConjunto, onClearConjunto,
-  onUpdateConjuntoMeta, onUpdateConjuntoData, onConjuntoStatusChange, onOpenConjuntoFotos, onAddConjuntoFotos,
+  onUpdateConjuntoMeta, onUpdateConjuntoData, onConjuntoStatusChange, onOpenConjuntoFotos, onPreviewConjuntoFotos, onAddConjuntoFotos,
   onSave,
+  onDuplicate,
   saving,
   saveError,
   migrationWarning,
@@ -1755,6 +1971,7 @@ function PecaDetalhesModal({
   onStatusChangePiece: (id: string, status: string) => void
   onConjuntoClick: () => void
   onOpenPieceFotos: (id: string) => void
+  onPreviewPieceFotos: (id: string) => void
   onAddPieceFotos: (id: string, files: FileList) => void
   onAddAnotherPiece: () => void
   onRemovePiece: (id: string) => void
@@ -1766,8 +1983,10 @@ function PecaDetalhesModal({
   onUpdateConjuntoData: (changes: Partial<ConjuntoData>) => void
   onConjuntoStatusChange: (status: string) => void
   onOpenConjuntoFotos: () => void
+  onPreviewConjuntoFotos: () => void
   onAddConjuntoFotos: (files: FileList) => void
   onSave: () => void
+  onDuplicate?: () => void
   saving: boolean
   saveError: string | null
   migrationWarning: string | null
@@ -1891,7 +2110,7 @@ function PecaDetalhesModal({
   }
 
   function handleConjuntoFotoClick() {
-    if (totalFotosConj > 0) onOpenConjuntoFotos()
+    if (totalFotosConj > 0) onPreviewConjuntoFotos()
     else conjuntoFileRef.current?.click()
   }
 
@@ -1943,21 +2162,34 @@ function PecaDetalhesModal({
             <section className="p-4 border-2 border-terracota/25 bg-[#EDE8DF]/60 rounded-sm space-y-4">
               <ModalSectionTitle>{lockConjunto ? 'Conjunto' : 'Novo conjunto'}</ModalSectionTitle>
 
-              {lockConjunto && (
-                <p
-                  id="modal-field-conjunto-nome"
-                  className={`font-sans text-xs text-carvao p-2 -m-2 rounded-sm ${highlightPublicationFields.includes('nome') ? pubFieldHighlightCls(true) : ''}`}
-                >
-                  {isNew ? 'Adicionando peças ao conjunto' : 'Conjunto'}{' '}
-                  <span className="font-mono font-semibold text-terracota">{row.conjunto_codigo}</span>
-                  {row.conjunto_nome && <span className="text-muted"> — {row.conjunto_nome}</span>}
-                  {highlightPublicationFields.includes('nome') && (
-                    <span className="block font-sans text-[10px] text-terracota mt-1">Preencha o nome ou código do conjunto na tabela.</span>
-                  )}
-                </p>
-              )}
-
               <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className={MODAL_LBL}>Código do conjunto</label>
+                  <CodigoField
+                    value={row.conjunto_codigo}
+                    error={conjuntoCodigoError}
+                    placeholder="Código único"
+                    className={`${MODAL_INP} font-mono`}
+                    onChange={onConjuntoCodigoChange}
+                    onCommit={onConjuntoCodigoCommit}
+                  />
+                </div>
+                <div
+                  id="modal-field-conjunto-nome"
+                  className={`p-1 -m-1 ${highlightPublicationFields.includes('nome') ? pubFieldHighlightCls(true) : ''}`}
+                >
+                  <label className={MODAL_LBL}>Nome do conjunto</label>
+                  <input
+                    type="text"
+                    value={row.conjunto_nome}
+                    onChange={(e) => onUpdateConjuntoMeta({ nome: e.target.value })}
+                    placeholder="Nome (opcional)"
+                    className={MODAL_INP}
+                  />
+                  {highlightPublicationFields.includes('nome') && (
+                    <span className="block font-sans text-[10px] text-terracota mt-1">Preencha o nome ou código do conjunto.</span>
+                  )}
+                </div>
                 <div>
                   <label className={MODAL_LBL}>Categoria</label>
                   <select
@@ -1969,30 +2201,6 @@ function PecaDetalhesModal({
                     {CATEGORIAS_PECA.map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
-                {!lockConjunto && (
-                  <div>
-                    <label className={MODAL_LBL}>Código do conjunto</label>
-                    <CodigoField
-                      value={row.conjunto_codigo}
-                      error={conjuntoCodigoError}
-                      placeholder="Código único"
-                      className={`${MODAL_INP} font-mono`}
-                      onChange={onConjuntoCodigoChange}
-                      onCommit={onConjuntoCodigoCommit}
-                    />
-                  </div>
-                )}
-                {!lockConjunto && (
-                  <div
-                    id="modal-field-conjunto-nome"
-                    className={`col-span-2 p-1 -m-1 ${highlightPublicationFields.includes('nome') ? pubFieldHighlightCls(true) : ''}`}
-                  >
-                    <label className={MODAL_LBL}>Nome do conjunto</label>
-                    <input type="text" value={row.conjunto_nome}
-                      onChange={(e) => onUpdateConjuntoMeta({ nome: e.target.value })}
-                      placeholder="Nome (opcional)" className={MODAL_INP} />
-                  </div>
-                )}
               </div>
 
               <div className="flex gap-4 items-start">
@@ -2010,7 +2218,8 @@ function PecaDetalhesModal({
                       }
                     }} />
                   <button type="button" onClick={handleConjuntoFotoClick}
-                    className="relative w-[72px] h-[72px] overflow-hidden flex items-center justify-center shrink-0 border-2 border-terracota/40 bg-white hover:border-terracota transition-colors">
+                    title={totalFotosConj > 0 ? 'Ver foto ampliada' : 'Adicionar fotos ao conjunto'}
+                    className="relative w-[72px] h-[72px] overflow-hidden flex items-center justify-center shrink-0 border-2 border-terracota/40 bg-white hover:border-terracota transition-colors cursor-zoom-in">
                     {conjuntoPrincipalSrc ? (
                       <Thumb src={conjuntoPrincipalSrc} alt="Foto do conjunto" />
                     ) : (
@@ -2071,6 +2280,7 @@ function PecaDetalhesModal({
                   onCodigoCommit={(prev) => onPecaCodigoCommit(piece.id, prev)}
                   onStatusChange={(status) => onStatusChangePiece(piece.id, status)}
                   onOpenFotos={() => onOpenPieceFotos(piece.id)}
+                  onPreviewFoto={() => onPreviewPieceFotos(piece.id)}
                   onAddFotos={(files) => onAddPieceFotos(piece.id, files)}
                   onRemove={() => onRemovePiece(piece.id)}
                   margemVendaConfig={margemVendaConfig}
@@ -2216,6 +2426,7 @@ function PecaDetalhesModal({
               onUpdate={(changes) => onUpdatePiece(row.id, changes)}
               onStatusChange={(status) => onStatusChangePiece(row.id, status)}
               onOpenFotos={() => onOpenPieceFotos(row.id)}
+              onPreviewFoto={() => onPreviewPieceFotos(row.id)}
               onAddFotos={(files) => onAddPieceFotos(row.id, files)}
               margemVendaConfig={margemVendaConfig}
               custoHoraFixo={custoHoraFixo}
@@ -2265,7 +2476,13 @@ function PecaDetalhesModal({
         </div>
 
         <div className="px-6 py-3 border-t border-pedra flex items-center justify-between gap-4 shrink-0 bg-[#FAFAF8]">
-          <div className="min-w-0">
+          <div className="min-w-0 flex items-center gap-2">
+            {!isNew && onDuplicate && (
+              <button type="button" onClick={onDuplicate}
+                className="font-sans text-xs text-terracota hover:text-carvao px-4 py-2 border border-terracota/40 hover:bg-areia/50 transition-colors whitespace-nowrap">
+                Gerar cópia
+              </button>
+            )}
             {saveError && <p className="font-sans text-xs text-red-600 break-words">{saveError}</p>}
             {!saveError && migrationWarning && (
               <p className="font-sans text-xs text-amber-800 break-words">{migrationWarning}</p>
@@ -2318,6 +2535,7 @@ export function PecasTable({
   })
 
   const [fotoModal, setFotoModal] = useState<{ type: 'peca'; id: string } | { type: 'conjunto'; id: string } | null>(null)
+  const [fotoPreview, setFotoPreview] = useState<FotoPreviewState | null>(null)
   const [descricaoModal, setDescricaoModal] = useState<{ type: 'peca'; id: string } | { type: 'conjunto'; id: string } | null>(null)
   const [conjuntoModal, setConjuntoModal] = useState<string | null>(null)
   const [editModal, setEditModal] = useState<string | null>(null)
@@ -2634,8 +2852,13 @@ export function PecasTable({
     return out
   }
 
+  /** Apenas códigos de peças — usado para sugerir o próximo U/D/C/UD. */
+  function getAllPecaCodigoStrings(): string[] {
+    return rows.map((r) => r.codigo.trim()).filter(Boolean)
+  }
+
   function suggestNewPecaCodigo(conjuntoId?: string, categoria?: string): string {
-    const all = getAllCodigoStrings()
+    const all = getAllPecaCodigoStrings()
     if (categoria) {
       const fromCat = suggestCodigoForCategoria(categoria, all)
       if (fromCat) return fromCat
@@ -2656,9 +2879,11 @@ export function PecasTable({
   function handlePecaCategoriaChange(rowId: string, categoria: string) {
     const row = rows.find((r) => r.id === rowId)
     if (!row) return
-    const suggested = suggestCodigoForCategoria(categoria, getAllCodigoStrings())
+    const suggested = suggestCodigoForCategoria(categoria, getAllPecaCodigoStrings())
     const changes: Partial<PecaRow> = { categoria }
-    if (suggested && (row.isNew || !row.codigo.trim())) {
+    if (suggested && row.isNew) {
+      changes.codigo = suggested
+    } else if (suggested && !row.codigo.trim()) {
       changes.codigo = suggested
     }
     update(rowId, changes)
@@ -2669,14 +2894,13 @@ export function PecasTable({
     updateConjuntoData(conjuntoId, { categoria })
     const prefix = categoriaToPrefix(categoria)
     if (!prefix) return
-    const allCodigos = getAllCodigoStrings()
-    const used = [...allCodigos]
+    const used = [...getAllPecaCodigoStrings()]
     setRows((prev) =>
       prev.map((r) => {
         if (r.conjunto_id !== conjuntoId || !r.isNew || r.codigo.trim()) return r
         const code = suggestNextPecaCodigo(prefix, used)
         used.push(code)
-        return { ...r, codigo: code, dirty: true }
+        return { ...r, codigo: code, categoria, dirty: true }
       }),
     )
     setSaveStatus('idle')
@@ -2706,7 +2930,9 @@ export function PecasTable({
       setCodigoError(`peca:${rowId}`, null)
       return
     }
-    const result = validatePecaCodigoUnique(row.codigo, buildCodigoLists(rowId), rowId)
+    const result = validatePecaCodigoUnique(row.codigo, buildCodigoLists(rowId), rowId, {
+      strictFormat: row.isNew,
+    })
     if (!result.ok) {
       setCodigoError(`peca:${rowId}`, result.error)
       update(rowId, { codigo: prevValue })
@@ -2721,20 +2947,28 @@ export function PecasTable({
     setCodigoError(`conjunto:${conjuntoId}`, null)
   }
 
-  function validateAllCodigosBeforeSave(): string | null {
+  function validateAllCodigosBeforeSave(scope?: { pecaIds?: string[]; conjuntoIds?: string[] }): string | null {
     const lists = buildCodigoLists()
     const seen = new Set<string>()
-    for (const p of lists.pecaCodigos) {
-      if (!p.codigo.trim()) continue
-      const result = validatePecaCodigoUnique(p.codigo, lists, p.id)
+    const pecaRows = scope?.pecaIds
+      ? rows.filter((r) => scope.pecaIds!.includes(r.id))
+      : rows
+    for (const r of pecaRows) {
+      if (!r.codigo.trim()) continue
+      const result = validatePecaCodigoUnique(r.codigo, lists, r.id, { strictFormat: r.isNew })
       if (!result.ok) return result.error
       const key = normalizeCodigoKey(result.canonical)
       if (seen.has(key)) return `O código ${result.canonical} já existe.`
       seen.add(key)
     }
-    for (const c of lists.conjuntoCodigos) {
-      if (!c.codigo.trim()) continue
-      const result = validateConjuntoCodigoUnique(c.codigo, lists, c.conjuntoId)
+    const conjuntoIds = scope
+      ? (scope.conjuntoIds ?? [])
+      : [...new Set(rows.map((r) => r.conjunto_id).filter(Boolean) as string[])]
+    for (const conjuntoId of conjuntoIds) {
+      const ref = rows.find((r) => r.conjunto_id === conjuntoId)
+      const codigo = ref?.conjunto_codigo ?? ''
+      if (!codigo.trim()) continue
+      const result = validateConjuntoCodigoUnique(codigo, lists, conjuntoId)
       if (!result.ok) return result.error
       const key = normalizeCodigoKey(result.canonical)
       if (seen.has(key)) return `O código ${result.canonical} já existe.`
@@ -2908,6 +3142,97 @@ export function PecasTable({
     const target = rows.find((r) => r.id === id)
     setEditModalLockedConjunto(!!target?.conjunto_id)
     setEditModal(id)
+    clearPublicationFieldHighlights()
+  }
+
+  function duplicatePeca(rowId: string) {
+    const source = rows.find((r) => r.id === rowId)
+    if (!source || source.conjunto_id) return
+
+    const allCodes = getAllCodigoStrings()
+    const newCodigo = suggestNextPecaCodigoFromSource(source, allCodes)
+    const newRow = clonePecaAsNew(source, {
+      codigo: newCodigo,
+      conjunto_id: null,
+      conjunto_codigo: '',
+      conjunto_nome: '',
+      ordem: null,
+    })
+
+    setRows((prev) => {
+      const idx = prev.findIndex((r) => r.id === rowId)
+      if (idx === -1) return [...prev, newRow]
+      return [...prev.slice(0, idx + 1), newRow, ...prev.slice(idx + 1)]
+    })
+    setEditModalLockedConjunto(false)
+    setEditModal(newRow.id)
+    setSaveStatus('idle')
+    clearPublicationFieldHighlights()
+    window.setTimeout(() => {
+      document.getElementById(`peca-row-${newRow.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 150)
+  }
+
+  function duplicateConjunto(conjuntoId: string) {
+    const pieces = getConjuntoPiecesFromRows(rows, conjuntoId)
+    if (pieces.length === 0) return
+
+    const ref = pieces[0]
+    const sourceCdata = conjuntosData.get(conjuntoId) ?? defaultConjuntoData()
+    const newConjuntoId = crypto.randomUUID()
+    const allCodes = [...getAllCodigoStrings()]
+    const newConjuntoCodigo = suggestNextConjuntoCodigo(allCodes)
+    allCodes.push(newConjuntoCodigo)
+    const newConjuntoNome = ref.conjunto_nome
+    const pieceStatus = sourceCdata.status === 'vendido' ? '' : sourceCdata.status
+    const conjuntoPrefix = sourceCdata.categoria ? categoriaToPrefix(sourceCdata.categoria) : null
+
+    const newPieces = pieces.map((piece, idx) => {
+      let newPieceCodigo: string
+      if (conjuntoPrefix) {
+        newPieceCodigo = suggestNextPecaCodigo(conjuntoPrefix, allCodes)
+      } else {
+        newPieceCodigo = suggestNextPecaCodigoFromSource(piece, allCodes)
+      }
+      allCodes.push(newPieceCodigo)
+      return clonePecaAsNew(piece, {
+        codigo: newPieceCodigo,
+        conjunto_id: newConjuntoId,
+        conjunto_codigo: newConjuntoCodigo,
+        conjunto_nome: newConjuntoNome,
+        status: pieceStatus,
+        categoria: '',
+        descricao: '',
+        fenearte: false,
+        ordem: idx,
+      })
+    })
+
+    setConjuntosData((prev) => {
+      const next = new Map(prev)
+      next.set(newConjuntoId, cloneConjuntoDataAsNew(sourceCdata))
+      return next
+    })
+    setRows((prev) => {
+      let lastIdx = -1
+      for (let i = 0; i < prev.length; i++) {
+        if (prev[i].conjunto_id === conjuntoId) lastIdx = i
+      }
+      if (lastIdx === -1) return [...prev, ...newPieces]
+      return [...prev.slice(0, lastIdx + 1), ...newPieces, ...prev.slice(lastIdx + 1)]
+    })
+    setEditModalLockedConjunto(true)
+    setEditModal(newPieces[0].id)
+    setSaveStatus('idle')
+    clearPublicationFieldHighlights()
+    window.setTimeout(() => {
+      document.getElementById(`conjunto-row-${newConjuntoId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 150)
+  }
+
+  function openConjuntoEditModal(conjuntoId: string) {
+    const piece = rows.find((r) => r.conjunto_id === conjuntoId)
+    if (piece) openEditModal(piece.id)
   }
 
   function focusPublicationFieldsInModal(
@@ -3236,12 +3561,17 @@ export function PecasTable({
     clearPublicationFieldHighlights()
   }
 
+  function suggestNewConjuntoCodigo(): string {
+    return suggestNextConjuntoCodigo(getAllCodigoStrings())
+  }
+
   function enableConjuntoOnRow(rowId: string) {
     const row = rows.find((r) => r.id === rowId)
     if (row?.conjunto_id) return
     const conjuntoId = crypto.randomUUID()
+    const suggestedCodigo = suggestNewConjuntoCodigo()
     setRows((prev) => prev.map((r) => r.id === rowId
-      ? { ...r, conjunto_id: conjuntoId, conjunto_codigo: '', conjunto_nome: '', ...clearPecaSiteFields(''), dirty: true }
+      ? { ...r, conjunto_id: conjuntoId, conjunto_codigo: suggestedCodigo, conjunto_nome: '', ...clearPecaSiteFields(''), dirty: true }
       : r))
     setConjuntosData((prev) => {
       const next = new Map(prev)
@@ -3275,11 +3605,14 @@ export function PecasTable({
   function addAnotherPieceInModal(conjuntoId: string) {
     const ref = rows.find((r) => r.conjunto_id === conjuntoId)
     if (!ref) return
+    const cdata = conjuntosData.get(conjuntoId)
     const existing = getConjuntoPiecesFromRows(rows, conjuntoId)
+    const categoria = cdata?.categoria || ref.categoria || ''
     const newRow: PecaRow = {
       ...emptyRow(ref.conjunto_id!, ref.conjunto_codigo, ref.conjunto_nome, conjuntoStatusForPieces(conjuntoId, ref.status)),
       ordem: existing.length,
-      codigo: suggestNewPecaCodigo(conjuntoId),
+      categoria,
+      codigo: suggestNewPecaCodigo(conjuntoId, categoria),
     }
     setRows((prev) => [...prev, newRow])
     setEditModalLockedConjunto(true)
@@ -3354,15 +3687,60 @@ export function PecasTable({
   }
 
   function handlePecaThumbClick(row: PecaRow) {
-    const hasPhoto = row.fotos.length > 0 || row.fotosNovas.length > 0
-    if (hasPhoto) setFotoModal({ type: 'peca', id: row.id })
-    else directInputRefs.current.get(row.id)?.click()
+    const fotos = getPecaFotoSrcs(row)
+    if (fotos.length > 0) {
+      setFotoPreview({
+        fotos,
+        initialIndex: 0,
+        titulo: pecaFotoTitulo(row),
+        onManage: () => setFotoModal({ type: 'peca', id: row.id }),
+      })
+    } else {
+      directInputRefs.current.get(row.id)?.click()
+    }
   }
   function handleConjuntoThumbClick(conjuntoId: string) {
     const cdata = conjuntosData.get(conjuntoId) ?? defaultConjuntoData()
-    const hasPhoto = cdata.fotos.length > 0 || cdata.fotosNovas.length > 0
-    if (hasPhoto) setFotoModal({ type: 'conjunto', id: conjuntoId })
-    else conjuntoInputRefs.current.get(conjuntoId)?.click()
+    const fotos = getConjuntoFotoSrcs(cdata)
+    if (fotos.length > 0) {
+      const ref = rows.find((r) => r.conjunto_id === conjuntoId)
+      const titulo = [ref?.conjunto_codigo, ref?.conjunto_nome].filter(Boolean).join(' — ') || 'Conjunto'
+      setFotoPreview({
+        fotos,
+        initialIndex: 0,
+        titulo,
+        onManage: () => setFotoModal({ type: 'conjunto', id: conjuntoId }),
+      })
+    } else {
+      conjuntoInputRefs.current.get(conjuntoId)?.click()
+    }
+  }
+
+  function previewPecaFotos(id: string) {
+    const row = rows.find((r) => r.id === id)
+    if (!row) return
+    const fotos = getPecaFotoSrcs(row)
+    if (fotos.length === 0) return
+    setFotoPreview({
+      fotos,
+      initialIndex: 0,
+      titulo: pecaFotoTitulo(row),
+      onManage: () => setFotoModal({ type: 'peca', id: row.id }),
+    })
+  }
+
+  function previewConjuntoFotos(conjuntoId: string) {
+    const cdata = conjuntosData.get(conjuntoId) ?? defaultConjuntoData()
+    const fotos = getConjuntoFotoSrcs(cdata)
+    if (fotos.length === 0) return
+    const ref = rows.find((r) => r.conjunto_id === conjuntoId)
+    const titulo = [ref?.conjunto_codigo, ref?.conjunto_nome].filter(Boolean).join(' — ') || 'Conjunto'
+    setFotoPreview({
+      fotos,
+      initialIndex: 0,
+      titulo,
+      onManage: () => setFotoModal({ type: 'conjunto', id: conjuntoId }),
+    })
   }
 
   // ── Delete ─────────────────────────────────────────────────────────────────
@@ -3713,7 +4091,13 @@ export function PecasTable({
 
   async function handleModalSave() {
     if (!editRowModal) return
-    const codigoErr = validateAllCodigosBeforeSave()
+    const modalScope = editRowModal.conjunto_id
+      ? {
+          pecaIds: rows.filter((r) => r.conjunto_id === editRowModal.conjunto_id).map((r) => r.id),
+          conjuntoIds: [editRowModal.conjunto_id],
+        }
+      : { pecaIds: [editRowModal.id] }
+    const codigoErr = validateAllCodigosBeforeSave(modalScope)
     if (codigoErr) {
       setModalSaveError(codigoErr)
       return
@@ -3936,29 +4320,41 @@ export function PecasTable({
       </div>
 
       <div className="flex-1 min-h-0 border border-pedra bg-white overflow-auto">
-        <table className="w-full min-w-[1060px] border-collapse">
+        <table className="w-full table-fixed border-collapse">
+          <colgroup>
+            <col className="w-9" />
+            <col className="w-[72px]" />
+            <col className="w-[4.5rem]" />
+            <col />
+            <col className="w-[7.5rem]" />
+            <col className="w-[7.25rem]" />
+            <col className="w-[4.75rem]" />
+            <col className="w-[4.75rem]" />
+            <col className="w-[3.25rem]" />
+            <col className="w-[3.25rem]" />
+            <col className="w-[3.5rem]" />
+          </colgroup>
           <thead className="sticky top-0 z-30">
             <tr className="bg-[#F3F0EB] border-b border-pedra">
-              <th className={`${TH} w-10 text-center sticky left-0 z-20 bg-[#F3F0EB]`}>
+              <th className={`${TH} text-center ${STICKY_CHECKBOX} bg-[#F3F0EB]`}>
                 <input
                   type="checkbox"
                   checked={allVisibleSelected}
                   onChange={() => (allVisibleSelected ? clearSelection() : selectAllVisible())}
                   title="Selecionar todos na lista"
-                  className="w-4 h-4 accent-carvao cursor-pointer"
+                  className="w-3.5 h-3.5 accent-carvao cursor-pointer"
                 />
               </th>
-              <th className={`${TH} text-left w-[88px] sticky left-10 z-20 bg-[#F3F0EB]`}>Foto</th>
-              <th className={`${TH} text-left`}>Código</th>
+              <th className={`${TH} text-left ${STICKY_FOTO} bg-[#F3F0EB]`}>Foto</th>
+              <th className={`${TH} text-left`}>Cód.</th>
               <th className={`${TH} text-left`}>Nome</th>
+              <th className={`${TH} text-left`}>Categoria</th>
               <th className={`${TH} text-left border-l border-pedra/60`}>Status</th>
-              <th className={`${TH} text-right bg-terracota/10 border-l border-pedra/60`}>Preço de custo</th>
-              <th className={`${TH} text-right`}>Preço sugerido</th>
-              <th className={`${TH} text-right`}>Preço praticado</th>
-              <th className={`${TH} text-center border-l border-pedra/60`}>Exibir no site</th>
-              <th className={`${TH} text-center`}>Destaque</th>
-              <th className={`${TH} text-center`}>Exibição em feira</th>
-              <th className={`${TH} text-center w-24`}>Ações</th>
+              <th className={`${TH} text-right border-l border-pedra/60`}>Sugerido</th>
+              <th className={`${TH} text-right`}>Praticado</th>
+              <th className={`${TH} text-center border-l border-pedra/60`}>Site</th>
+              <th className={`${TH} text-center`}>Feira</th>
+              <th className={`${TH} text-center`}>Ações</th>
             </tr>
           </thead>
 
@@ -3984,16 +4380,16 @@ export function PecasTable({
 
                 return (
                   <tr key={`ch-${item.conjuntoId}`} id={`conjunto-row-${item.conjuntoId}`} className={conjHeaderBg}>
-                    <td className={`px-2 py-2.5 w-10 text-center sticky left-0 z-10 ${conjHeaderBg}`}>
+                    <td className={`px-2 py-2 text-center ${STICKY_CHECKBOX} ${conjHeaderBg}`}>
                       <input
                         type="checkbox"
                         checked={selectedKeys.has(conjSelectKey)}
                         onChange={() => toggleSelectKey(conjSelectKey)}
-                        className="w-4 h-4 accent-carvao cursor-pointer"
+                        className="w-3.5 h-3.5 accent-carvao cursor-pointer"
                       />
                     </td>
                     {/* Col 1: Foto + badge */}
-                    <td className={`px-3 py-2.5 sticky left-10 z-10 w-[88px] ${conjHeaderBg}`}>
+                    <td className={`px-2 py-2 ${STICKY_FOTO} ${conjHeaderBg}`}>
                       <input
                         ref={(el) => { if (el) conjuntoInputRefs.current.set(item.conjuntoId, el); else conjuntoInputRefs.current.delete(item.conjuntoId) }}
                         type="file" accept="image/jpeg,image/png,image/webp" multiple className="hidden"
@@ -4005,16 +4401,16 @@ export function PecasTable({
                           <span className="font-sans text-[8px] tracking-widest uppercase text-carvao font-bold">Conjunto</span>
                         </span>
                         <button type="button" onClick={() => handleConjuntoThumbClick(item.conjuntoId)}
-                          title={totalFotosConj > 0 ? 'Gerenciar fotos do conjunto' : 'Adicionar fotos ao conjunto'}
-                          className="relative w-[58px] h-[58px] bg-white border-2 border-terracota/50 hover:border-terracota overflow-hidden transition-all group/cthumb flex items-center justify-center shrink-0 shadow-md ring-2 ring-terracota/15">
+                          title={totalFotosConj > 0 ? 'Ver foto ampliada' : 'Adicionar fotos ao conjunto'}
+                          className="relative w-[52px] h-[52px] bg-white border-2 border-terracota/50 hover:border-terracota overflow-hidden transition-all group/cthumb flex items-center justify-center shrink-0 shadow-md ring-2 ring-terracota/15 cursor-zoom-in">
                           {principalSrc ? <Thumb src={principalSrc} alt="Foto do conjunto" /> : (
                             <svg className="w-4 h-4 text-terracota/50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                             </svg>
                           )}
-                          <div className="absolute inset-0 bg-carvao/0 group-hover/cthumb:bg-carvao/30 transition-colors flex items-center justify-center">
+                          <div className="absolute inset-0 bg-carvao/0 group-hover/cthumb:bg-carvao/30 transition-colors flex items-center justify-center pointer-events-none">
                             <svg className="w-3.5 h-3.5 text-white opacity-0 group-hover/cthumb:opacity-100 drop-shadow" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={totalFotosConj > 0 ? 'M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z M15 13a3 3 0 11-6 0 3 3 0 016 0z' : 'M12 4v16m8-8H4'} />
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={totalFotosConj > 0 ? 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7' : 'M12 4v16m8-8H4'} />
                             </svg>
                           </div>
                           {totalFotosConj > 1 && <span className="absolute top-0.5 right-0.5 bg-terracota text-cru font-sans text-[7px] w-3.5 h-3.5 flex items-center justify-center">{totalFotosConj}</span>}
@@ -4023,46 +4419,52 @@ export function PecasTable({
                     </td>
 
                     {/* Col 2: código */}
-                    <td className="px-3 py-2 min-w-[100px]">
+                    <td className="px-2 py-2">
                       <CodigoField
                         value={item.conjuntoCodigo}
                         error={codigoErrors[`conjunto:${item.conjuntoId}`]}
                         placeholder="Código"
-                        className="font-mono text-xs font-bold text-carvao bg-transparent border-b border-terracota/40 focus:border-terracota focus:outline-none min-w-[80px] w-full py-0.5"
+                        className="font-mono text-[11px] font-bold text-carvao bg-transparent border-b border-terracota/40 focus:border-terracota focus:outline-none w-full py-0.5"
                         onChange={(v) => handleConjuntoCodigoInput(item.conjuntoId, v)}
                         onCommit={(prev) => commitConjuntoCodigo(item.conjuntoId, prev)}
                       />
                     </td>
 
                     {/* Col 3: nome */}
-                    <td className="px-3 py-2">
+                    <td className="px-2 py-2 min-w-0">
                       <input type="text" value={item.conjuntoNome}
                         onChange={(e) => updateConjunto(item.conjuntoId, { nome: e.target.value })}
                         placeholder="Nome do conjunto"
-                        className="font-sans text-xs text-carvao/80 bg-transparent border-b border-transparent hover:border-terracota/30 focus:border-terracota focus:outline-none w-full" />
+                        className="font-sans text-[11px] text-carvao/80 bg-transparent border-b border-transparent hover:border-terracota/30 focus:border-terracota focus:outline-none w-full truncate" />
+                    </td>
+
+                    {/* Categoria do conjunto */}
+                    <td className="px-2 py-2">
+                      <select
+                        value={cdata.categoria}
+                        onChange={(e) => handleConjuntoCategoriaChange(item.conjuntoId, e.target.value)}
+                        className={tableSelectCls}
+                      >
+                        <option value="">—</option>
+                        {CATEGORIAS_PECA.map((c) => <option key={c} value={c}>{c}</option>)}
+                      </select>
                     </td>
 
                     {/* Status do conjunto */}
-                    <td className="px-3 py-2 border-l border-pedra/30">
+                    <td className="px-2 py-2 border-l border-pedra/30">
                       <select value={getConjuntoStatusDisplayValue(item.conjuntoId, cdata.status)} onChange={(e) => handleConjuntoStatusChange(item.conjuntoId, e.target.value)}
-                        className={`${selectCls} min-w-[150px] border-terracota/30 focus:border-terracota`}>
-                        <option value="">— Selecionar —</option>
+                        className={tableSelectCls}>
+                        <option value="">—</option>
                         {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
                       </select>
                     </td>
 
-                    {/* Totais de preço na mesma linha do conjunto */}
-                    <td className="px-3 py-2 text-right bg-terracota/10 border-l border-pedra/30">
-                      {conjPricing.totalCusto > 0
-                        ? <span className="font-sans text-sm font-bold text-carvao">R$ {fmt(conjPricing.totalCusto)}</span>
-                        : <span className="font-sans text-sm text-muted/40">—</span>}
-                    </td>
-                    <td className="px-3 py-2 text-right">
+                    <td className="px-2 py-2 text-right border-l border-pedra/30">
                       {conjPricing.precoSugerido > 0
-                        ? <span className="font-sans text-sm font-bold text-terracota">R$ {fmt(conjPricing.precoSugerido)}</span>
-                        : <span className="font-sans text-sm text-muted/40">—</span>}
+                        ? <span className="font-sans text-[11px] font-bold text-terracota tabular-nums">R$ {fmt(conjPricing.precoSugerido)}</span>
+                        : <span className="font-sans text-[11px] text-muted/40">—</span>}
                     </td>
-                    <td className="px-3 py-2 text-right">
+                    <td className="px-2 py-2 text-right">
                       {(() => {
                         const isAuto = cdata.preco_praticado === '' && conjPricing.precoSugerido > 0
                         const display = isAuto ? conjPricing.precoSugerido.toFixed(2) : cdata.preco_praticado
@@ -4077,44 +4479,45 @@ export function PecasTable({
                     </td>
 
                     {/* Exibir no site (conjunto) */}
-                    <td className="px-3 py-2 text-center border-l border-pedra/30">
-                      <div className="flex flex-col items-center gap-1">
+                    <td className="px-1 py-2 text-center border-l border-pedra/30">
+                      <div className="flex flex-col items-center gap-0.5">
                         <button type="button" onClick={() => requestExibirConjunto(item.conjuntoId)}
-                          className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${cdata.exibir_no_site ? 'bg-terracota' : 'bg-pedra/50'}`}>
-                          <span className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform ${cdata.exibir_no_site ? 'translate-x-4' : 'translate-x-0'}`} />
+                          className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${cdata.exibir_no_site ? 'bg-terracota' : 'bg-pedra/50'}`}>
+                          <span className={`pointer-events-none inline-block h-3 w-3 rounded-full bg-white shadow transform transition-transform ${cdata.exibir_no_site ? 'translate-x-3' : 'translate-x-0'}`} />
                         </button>
-                        {cdata.exibir_no_site && <span className="font-sans text-[8px] text-terracota tracking-wide uppercase">Publicado</span>}
+                        {cdata.exibir_no_site && <span className="font-sans text-[7px] text-terracota tracking-wide uppercase leading-none">Sim</span>}
                       </div>
                     </td>
 
-                    {/* Destaque (conjunto) */}
-                    <td className="px-3 py-2 text-center">
-                      <DestaqueToggle
-                        visible={cdata.exibir_no_site}
-                        active={cdata.destaque_home}
-                        onToggle={() => tryToggleDestaqueConjunto(item.conjuntoId)}
-                      />
-                    </td>
-
                     {/* Exibição em feira (conjunto) */}
-                    <td className="px-3 py-2 text-center">
-                      <div className="flex flex-col items-center gap-1">
+                    <td className="px-1 py-2 text-center">
+                      <div className="flex flex-col items-center gap-0.5">
                         <button type="button" onClick={() => updateConjuntoData(item.conjuntoId, { fenearte: !cdata.fenearte })}
-                          className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${cdata.fenearte ? 'bg-amber-500' : 'bg-pedra/50'}`}>
-                          <span className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform ${cdata.fenearte ? 'translate-x-4' : 'translate-x-0'}`} />
+                          className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${cdata.fenearte ? 'bg-amber-500' : 'bg-pedra/50'}`}>
+                          <span className={`pointer-events-none inline-block h-3 w-3 rounded-full bg-white shadow transform transition-transform ${cdata.fenearte ? 'translate-x-3' : 'translate-x-0'}`} />
                         </button>
-                        {cdata.fenearte && <span className="font-sans text-[8px] text-amber-600 tracking-wide uppercase">Sim</span>}
+                        {cdata.fenearte && <span className="font-sans text-[7px] text-amber-600 tracking-wide uppercase leading-none">Sim</span>}
                       </div>
                     </td>
 
                     {/* Actions */}
-                    <td className="px-2 py-2 text-center w-24">
-                      <button type="button" onClick={() => openAddPecaForm(item.conjuntoId)}
-                        title="Adicionar peça a este conjunto"
-                        className="font-sans text-[9px] text-terracota hover:text-carvao flex items-center gap-0.5 mx-auto whitespace-nowrap">
-                        <span className="text-base leading-none font-light">+</span> Peça
-                        <span className="text-muted/50 ml-0.5">({item.rows.length})</span>
-                      </button>
+                    <td className="px-1 py-2 text-center">
+                      <div className="flex flex-col items-center gap-1.5">
+                        <button type="button" onClick={() => openConjuntoEditModal(item.conjuntoId)}
+                          className="font-sans text-[10px] text-terracota hover:text-carvao border border-terracota/40 px-2 py-0.5 hover:bg-areia/60 transition-colors whitespace-nowrap">
+                          Editar
+                        </button>
+                        <button type="button" onClick={() => duplicateConjunto(item.conjuntoId)}
+                          className="font-sans text-[10px] text-muted hover:text-carvao border border-pedra px-2 py-0.5 hover:bg-areia/60 transition-colors whitespace-nowrap">
+                          Duplicar
+                        </button>
+                        <button type="button" onClick={() => openAddPecaForm(item.conjuntoId)}
+                          title="Adicionar peça a este conjunto"
+                          className="font-sans text-[9px] text-terracota hover:text-carvao flex items-center gap-0.5 whitespace-nowrap">
+                          <span className="text-base leading-none font-light">+</span> Peça
+                          <span className="text-muted/50 ml-0.5">({item.rows.length})</span>
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 )
@@ -4154,11 +4557,7 @@ export function PecasTable({
                 : inConjunto
                   ? (effectiveFenearte ? `bg-amber-50/35 ${CONJ_CHILD_ROW_HOVER}` : `${CONJ_CHILD_ROW} ${CONJ_CHILD_ROW_HOVER}`)
                   : row.fenearte ? 'bg-amber-50/60 hover:bg-amber-50' : 'hover:bg-cru/40'
-              const stickyBg = row.dirty
-                ? 'bg-terracota/[0.04]'
-                : inConjunto
-                  ? (effectiveFenearte ? 'bg-amber-50/35 group-hover:bg-amber-50/55' : 'bg-areia/30 group-hover:bg-areia/50')
-                  : row.fenearte ? 'bg-amber-50/60 group-hover:bg-amber-50' : 'bg-white group-hover:bg-cru/40'
+              const stickyBg = stickyCellBg(row, inConjunto, effectiveFenearte)
 
               // Placeholder for conjunto-managed fields
               const conjuntoManagedCell = (
@@ -4170,88 +4569,94 @@ export function PecasTable({
               return (
                 <tr key={row.id} id={`peca-row-${row.id}`} className={`transition-colors group ${rowBg} ${conjChildSpacing}`}>
 
-                  <td className={`px-2 py-2 w-10 text-center sticky left-0 z-10 transition-colors ${stickyBg}`}>
+                  <td className={`px-2 py-2 text-center ${STICKY_CHECKBOX} transition-colors ${stickyBg}`}>
                     <input
                       type="checkbox"
                       checked={selectedKeys.has(rowSelectKey)}
                       onChange={() => toggleSelectKey(rowSelectKey)}
-                      className="w-4 h-4 accent-carvao cursor-pointer"
+                      className="w-3.5 h-3.5 accent-carvao cursor-pointer"
                     />
                   </td>
 
                   {/* Foto */}
-                  <td className={`px-3 py-2 w-[88px] sticky left-10 z-10 transition-colors ${stickyBg} ${inConjunto ? `${CONJ_CHILD_INDENT} border-l-[3px] border-l-terracota/40` : ''}`}>
+                  <td className={`px-2 py-2 ${STICKY_FOTO} transition-colors ${stickyBg} ${inConjunto ? `${CONJ_CHILD_INDENT} border-l-[3px] border-l-terracota/40` : ''}`}>
                     <input
                       ref={(el) => { if (el) directInputRefs.current.set(row.id, el); else directInputRefs.current.delete(row.id) }}
                       type="file" accept="image/jpeg,image/png,image/webp" multiple className="hidden"
                       onChange={(e) => { if (e.target.files?.length) { addFotos(row.id, e.target.files); e.target.value = ''; setFotoModal({ type: 'peca', id: row.id }) } }}
                     />
-                    <button type="button" onClick={() => handlePecaThumbClick(row)} title={totalFotos > 0 ? 'Gerenciar fotos' : 'Adicionar foto'}
-                      className={`relative w-[60px] h-[60px] overflow-hidden transition-all group/thumb flex items-center justify-center shrink-0 ${
+                    <button type="button" onClick={() => handlePecaThumbClick(row)} title={totalFotos > 0 ? 'Ver foto ampliada' : 'Adicionar foto'}
+                      className={`relative w-[52px] h-[52px] overflow-hidden transition-all group/thumb flex items-center justify-center shrink-0 cursor-zoom-in ${
                         inConjunto
                           ? 'bg-white border border-pedra/40 hover:border-terracota/50'
                           : 'bg-areia border border-pedra hover:border-terracota'
                       }`}>
                       {principalSrc ? (
-                        <>
-                          <Thumb
-                            src={principalSrc}
-                            alt="Foto da peça"
-                            className={inConjunto ? 'opacity-70 brightness-110 saturate-50 transition-opacity group-hover/thumb:opacity-85' : ''}
-                          />
-                          {inConjunto && (
-                            <div className="absolute inset-0 bg-white/28 pointer-events-none transition-colors group-hover/thumb:bg-white/15" />
-                          )}
-                        </>
+                        <Thumb
+                          src={principalSrc}
+                          alt="Foto da peça"
+                          className={inConjunto ? 'ring-1 ring-inset ring-terracota/15' : ''}
+                        />
                       ) : (
                         <svg className={`w-5 h-5 ${inConjunto ? 'text-pedra/50' : 'text-muted/40'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                         </svg>
                       )}
-                      <div className={`absolute inset-0 transition-colors flex items-center justify-center ${inConjunto ? 'bg-white/0 group-hover/thumb:bg-carvao/20' : 'bg-carvao/0 group-hover/thumb:bg-carvao/35'}`}>
+                      <div className={`absolute inset-0 transition-colors flex items-center justify-center pointer-events-none ${inConjunto ? 'bg-white/0 group-hover/thumb:bg-carvao/20' : 'bg-carvao/0 group-hover/thumb:bg-carvao/35'}`}>
                         <svg className="w-4 h-4 text-white opacity-0 group-hover/thumb:opacity-100 drop-shadow" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={totalFotos > 0 ? 'M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z M15 13a3 3 0 11-6 0 3 3 0 016 0z' : 'M12 4v16m8-8H4'} />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={totalFotos > 0 ? 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7' : 'M12 4v16m8-8H4'} />
                         </svg>
                       </div>
                       {totalFotos > 1 && <span className="absolute top-0.5 right-0.5 bg-carvao/70 text-cru font-sans text-[8px] w-4 h-4 flex items-center justify-center">{totalFotos}</span>}
                     </button>
                   </td>
 
-                  <td className={`px-3 py-2 min-w-[110px] ${inConjunto ? 'pl-5' : ''}`}>
+                  <td className={`px-2 py-2 ${inConjunto ? 'pl-4' : ''}`}>
                     <CodigoField
                       value={row.codigo}
                       error={codigoErrors[`peca:${row.id}`]}
-                      placeholder="C1, U2, D3, UD4"
-                      className={textInput}
+                      placeholder="C1"
+                      className={`${textInput} font-mono`}
                       onChange={(v) => handlePecaCodigoInput(row.id, v)}
                       onCommit={(prev) => commitPecaCodigo(row.id, prev)}
                     />
                   </td>
-                  <td className="px-3 py-2 min-w-[150px]"><input type="text" value={row.nome} onChange={(e) => update(row.id, { nome: e.target.value })} placeholder="Nome da peça" className={textInput} /></td>
+                  <td className="px-2 py-2 min-w-0">
+                    <input type="text" value={row.nome} onChange={(e) => update(row.id, { nome: e.target.value })} placeholder="Nome" className={`${textInput} truncate`} />
+                  </td>
+
+                  {/* Categoria */}
+                  <td className="px-2 py-2">
+                    {inConjunto ? (
+                      <div className="flex justify-center">{conjuntoManagedCell}</div>
+                    ) : (
+                      <select
+                        value={row.categoria}
+                        onChange={(e) => handlePecaCategoriaChange(row.id, e.target.value)}
+                        className={tableSelectCls}
+                      >
+                        <option value="">—</option>
+                        {CATEGORIAS_PECA.map((c) => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    )}
+                  </td>
 
                   {/* Status — peças avulsas e peças do conjunto (venda separada) */}
-                  <td className="px-3 py-2 min-w-[160px] border-l border-pedra/30">
-                    <select value={getStatusDisplayValue(row)} onChange={(e) => handleStatusChange(row.id, e.target.value)} className={`${selectCls} min-w-[150px]`}>
-                      <option value="">— Selecionar —</option>
+                  <td className="px-2 py-2 border-l border-pedra/30">
+                    <select value={getStatusDisplayValue(row)} onChange={(e) => handleStatusChange(row.id, e.target.value)} className={tableSelectCls}>
+                      <option value="">—</option>
                       {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
                     </select>
                   </td>
 
-                  <td className="px-3 py-2 text-right bg-terracota/[0.06] border-l border-pedra/30">
-                    {inConjunto ? <div className="flex justify-end">{conjuntoManagedCell}</div> : (
-                      costs.custoTotal > 0
-                        ? <span className="font-sans text-sm font-bold text-carvao">R$ {fmt(costs.custoTotal)}</span>
-                        : <span className="font-sans text-sm text-muted/40">—</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-right">
+                  <td className="px-2 py-2 text-right border-l border-pedra/30">
                     {inConjunto ? <div className="flex justify-end">{conjuntoManagedCell}</div> : (
                       pricing.precoSugerido > 0
-                        ? <span className="font-sans text-sm font-bold text-terracota">R$ {fmt(pricing.precoSugerido)}</span>
-                        : <span className="font-sans text-sm text-muted/40">—</span>
+                        ? <span className="font-sans text-[11px] font-bold text-terracota tabular-nums">R$ {fmt(pricing.precoSugerido)}</span>
+                        : <span className="font-sans text-[11px] text-muted/40">—</span>
                     )}
                   </td>
-                  <td className="px-3 py-2 text-right">
+                  <td className="px-2 py-2 text-right">
                     {inConjunto ? <div className="flex justify-end">{conjuntoManagedCell}</div> : (() => {
                       const isAuto = row.preco_praticado === '' && pricing.precoSugerido > 0
                       const display = isAuto ? pricing.precoSugerido.toFixed(2) : row.preco_praticado
@@ -4266,59 +4671,64 @@ export function PecasTable({
                   </td>
 
                   {/* Exibir no site — apenas peças avulsas */}
-                  <td className="px-3 py-2 text-center border-l border-pedra/30">
+                  <td className="px-1 py-2 text-center border-l border-pedra/30">
                     {inConjunto ? <div className="flex justify-center">{conjuntoManagedCell}</div> : (
-                      <div className="flex flex-col items-center gap-1">
+                      <div className="flex flex-col items-center gap-0.5">
                         <button type="button" onClick={() => requestExibirPeca(row.id)}
-                          className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${row.exibir_no_site ? 'bg-terracota' : 'bg-pedra/50'}`}>
-                          <span className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform ${row.exibir_no_site ? 'translate-x-4' : 'translate-x-0'}`} />
+                          className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${row.exibir_no_site ? 'bg-terracota' : 'bg-pedra/50'}`}>
+                          <span className={`pointer-events-none inline-block h-3 w-3 rounded-full bg-white shadow transform transition-transform ${row.exibir_no_site ? 'translate-x-3' : 'translate-x-0'}`} />
                         </button>
-                        {row.exibir_no_site && <span className="font-sans text-[8px] text-terracota tracking-wide uppercase">Publicado</span>}
+                        {row.exibir_no_site && <span className="font-sans text-[7px] text-terracota tracking-wide uppercase leading-none">Sim</span>}
                       </div>
                     )}
                   </td>
 
-                  {/* Destaque — apenas peças avulsas publicadas */}
-                  <td className="px-3 py-2 text-center">
-                    {inConjunto ? <div className="flex justify-center">{conjuntoManagedCell}</div> : (
-                      <DestaqueToggle
-                        visible={row.exibir_no_site}
-                        active={row.destaque_home}
-                        onToggle={() => tryToggleDestaquePeca(row.id)}
-                      />
-                    )}
-                  </td>
-
                   {/* Exibição em feira — apenas peças avulsas */}
-                  <td className="px-3 py-2 text-center">
+                  <td className="px-1 py-2 text-center">
                     {inConjunto ? <div className="flex justify-center">{conjuntoManagedCell}</div> : (
-                      <div className="flex flex-col items-center gap-1">
+                      <div className="flex flex-col items-center gap-0.5">
                         <button type="button" onClick={() => update(row.id, { fenearte: !row.fenearte })}
-                          className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${row.fenearte ? 'bg-amber-500' : 'bg-pedra/50'}`}>
-                          <span className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform ${row.fenearte ? 'translate-x-4' : 'translate-x-0'}`} />
+                          className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${row.fenearte ? 'bg-amber-500' : 'bg-pedra/50'}`}>
+                          <span className={`pointer-events-none inline-block h-3 w-3 rounded-full bg-white shadow transform transition-transform ${row.fenearte ? 'translate-x-3' : 'translate-x-0'}`} />
                         </button>
-                        {row.fenearte && <span className="font-sans text-[8px] text-amber-600 tracking-wide uppercase">Sim</span>}
+                        {row.fenearte && <span className="font-sans text-[7px] text-amber-600 tracking-wide uppercase leading-none">Sim</span>}
                       </div>
                     )}
                   </td>
 
                   {/* Actions */}
-                  <td className="px-2 py-2 text-center w-24">
-                    <div className="flex flex-col items-center gap-1.5">
-                      <button type="button" onClick={() => openEditModal(row.id)}
-                        className="font-sans text-[10px] text-terracota hover:text-carvao border border-terracota/40 px-2 py-0.5 hover:bg-areia/60 transition-colors whitespace-nowrap">
-                        Editar
-                      </button>
-                      {confirmDelete === row.id ? (
+                  <td className="px-1 py-2 text-center">
+                    {inConjunto ? (
+                      confirmDelete === row.id ? (
                         <div className="flex flex-col items-center gap-0.5">
                           <button type="button" onClick={() => handleDelete(row.id)} className="font-sans text-[9px] text-red-500 hover:text-red-700 whitespace-nowrap">Confirmar</button>
                           <button type="button" onClick={() => setConfirmDelete(null)} className="font-sans text-[9px] text-muted hover:text-carvao">Cancelar</button>
                         </div>
                       ) : (
-                        <button type="button" onClick={() => setConfirmDelete(row.id)}
+                        <button type="button" onClick={() => setConfirmDelete(row.id)} title="Remover peça do conjunto"
                           className="text-muted/40 hover:text-red-500 font-sans text-lg leading-none transition-colors opacity-60 hover:opacity-100">×</button>
-                      )}
-                    </div>
+                      )
+                    ) : (
+                      <div className="flex flex-col items-center gap-1.5">
+                        <button type="button" onClick={() => openEditModal(row.id)}
+                          className="font-sans text-[10px] text-terracota hover:text-carvao border border-terracota/40 px-2 py-0.5 hover:bg-areia/60 transition-colors whitespace-nowrap">
+                          Editar
+                        </button>
+                        <button type="button" onClick={() => duplicatePeca(row.id)}
+                          className="font-sans text-[10px] text-muted hover:text-carvao border border-pedra px-2 py-0.5 hover:bg-areia/60 transition-colors whitespace-nowrap">
+                          Duplicar
+                        </button>
+                        {confirmDelete === row.id ? (
+                          <div className="flex flex-col items-center gap-0.5">
+                            <button type="button" onClick={() => handleDelete(row.id)} className="font-sans text-[9px] text-red-500 hover:text-red-700 whitespace-nowrap">Confirmar</button>
+                            <button type="button" onClick={() => setConfirmDelete(null)} className="font-sans text-[9px] text-muted hover:text-carvao">Cancelar</button>
+                          </div>
+                        ) : (
+                          <button type="button" onClick={() => setConfirmDelete(row.id)}
+                            className="text-muted/40 hover:text-red-500 font-sans text-lg leading-none transition-colors opacity-60 hover:opacity-100">×</button>
+                        )}
+                      </div>
+                    )}
                   </td>
                 </tr>
               )
@@ -4388,7 +4798,9 @@ export function PecasTable({
 
       {formConjuntoModal && (
         <FormarConjuntoModal
+          key={formConjuntoModal.rowIds.join(',')}
           pieceCount={formConjuntoModal.rowIds.length}
+          suggestedCodigo={suggestNewConjuntoCodigo()}
           externalError={formConjuntoError}
           onConfirm={(codigo, nome) => createConjuntoFromSelection(formConjuntoModal.rowIds, codigo, nome)}
           onCancel={() => { setFormConjuntoModal(null); setFormConjuntoError(null) }}
@@ -4451,6 +4863,13 @@ export function PecasTable({
 
       {/* ── Modals ─────────────────────────────────────────────────────────── */}
 
+      {fotoPreview && (
+        <FotoPreviewModal
+          {...fotoPreview}
+          onClose={() => setFotoPreview(null)}
+        />
+      )}
+
       {/* Fotos de peça */}
       {pecaFotoModal && (
         <FotoModal
@@ -4463,6 +4882,15 @@ export function PecasTable({
           onRemoveExisting={(i) => removeExistingFoto(pecaFotoModal.id, i)}
           onRemoveNew={(i) => removeNewFoto(pecaFotoModal.id, i)}
           onSetPrincipal={(i, isNew) => setPrincipalFoto(pecaFotoModal.id, i, isNew)}
+          onPreviewPhoto={(index) => {
+            const fotos = getPecaFotoSrcs(pecaFotoModal)
+            setFotoPreview({
+              fotos,
+              initialIndex: index,
+              titulo: pecaFotoTitulo(pecaFotoModal),
+              onManage: () => setFotoModal({ type: 'peca', id: pecaFotoModal.id }),
+            })
+          }}
         />
       )}
 
@@ -4478,6 +4906,17 @@ export function PecasTable({
           onRemoveExisting={(i) => removeConjuntoExistingFoto(conjuntoFotoModalId, i)}
           onRemoveNew={(i) => removeConjuntoNewFoto(conjuntoFotoModalId, i)}
           onSetPrincipal={(i, isNew) => setConjuntoPrincipalFoto(conjuntoFotoModalId, i, isNew)}
+          onPreviewPhoto={(index) => {
+            const fotos = getConjuntoFotoSrcs(conjuntoFotoModalData)
+            const ref = rows.find((r) => r.conjunto_id === conjuntoFotoModalId)
+            const titulo = [ref?.conjunto_codigo, ref?.conjunto_nome].filter(Boolean).join(' — ') || 'Conjunto'
+            setFotoPreview({
+              fotos,
+              initialIndex: index,
+              titulo,
+              onManage: () => setFotoModal({ type: 'conjunto', id: conjuntoFotoModalId }),
+            })
+          }}
         />
       )}
 
@@ -4504,8 +4943,10 @@ export function PecasTable({
       {/* Modal de agrupar */}
       {conjuntoRowModal && (
         <ConjuntoModal
+          key={conjuntoRowModal.id}
           row={conjuntoRowModal}
           existingConjuntos={conjuntos}
+          suggestedCodigo={suggestNewConjuntoCodigo()}
           onClose={() => setConjuntoModal(null)}
           onCreate={createConjunto}
           onJoin={joinConjunto}
@@ -4548,6 +4989,7 @@ export function PecasTable({
           }
           onConjuntoClick={() => { setEditModal(null); setConjuntoModal(editRowModal.id) }}
           onOpenPieceFotos={(id) => setFotoModal({ type: 'peca', id })}
+          onPreviewPieceFotos={previewPecaFotos}
           onAddPieceFotos={(id, files) => addFotos(id, files)}
           onAddAnotherPiece={() => {
             if (editRowModal.conjunto_id) openAddPieceToConjuntoPicker(editRowModal.conjunto_id)
@@ -4569,10 +5011,18 @@ export function PecasTable({
           onOpenConjuntoFotos={() => {
             if (editRowModal.conjunto_id) setFotoModal({ type: 'conjunto', id: editRowModal.conjunto_id })
           }}
+          onPreviewConjuntoFotos={() => {
+            if (editRowModal.conjunto_id) previewConjuntoFotos(editRowModal.conjunto_id)
+          }}
           onAddConjuntoFotos={(files) => {
             if (editRowModal.conjunto_id) addConjuntoFotos(editRowModal.conjunto_id, files)
           }}
           onSave={handleModalSave}
+          onDuplicate={() => {
+            if (!editRowModal) return
+            if (editRowModal.conjunto_id) duplicateConjunto(editRowModal.conjunto_id)
+            else duplicatePeca(editRowModal.id)
+          }}
           saving={modalSaving}
           saveError={modalSaveError}
           migrationWarning={migrationWarning}

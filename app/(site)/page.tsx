@@ -242,6 +242,11 @@ export default async function HomePage() {
               {c.instagram_handle}
             </a>
           </div>
+          {c.instagram_texto && (
+            <p className="font-sans text-sm md:text-base leading-relaxed text-carvao/75 max-w-2xl mb-10">
+              {c.instagram_texto}
+            </p>
+          )}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             {[c.instagram_img1, c.instagram_img2, c.instagram_img3, c.instagram_img4]
               .filter(Boolean)

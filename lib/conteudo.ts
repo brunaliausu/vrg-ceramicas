@@ -27,7 +27,9 @@ export const HOME_DEFAULTS: HomeConteudo = {
   colecao_imagem: '',
   marquee_termos: 'peça única · feito à mão · barro & fogo · edição limitada · gesto e matéria',
   instagram_lead: 'Diário do ateliê',
-  instagram_titulo: 'Bastidores do barro',
+  instagram_titulo: 'Bastidores da criação',
+  instagram_texto:
+    'Aqui não existem moldes ou pressa, só a terra, o fogo, o tempo. A inspiração vem do cotidiano, do regional, da minha terra.',
   instagram_handle: '@vrg.ceramicas',
   instagram_img1: '',
   instagram_img2: '',

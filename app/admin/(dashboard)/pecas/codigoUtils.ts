@@ -50,6 +50,26 @@ export function parsePecaCodigo(raw: string): ParsedPecaCodigo | null {
   return { prefix, number, canonical: formatPecaCodigo(prefix, number) }
 }
 
+/** Aceita códigos legados com sufixo (ex.: U57A → prefixo U, número 57). */
+export function parsePecaCodigoLoose(raw: string): { prefix: PecaCodigoPrefix; number: number } | null {
+  const trimmed = raw.trim()
+  const match = trimmed.match(/^(ud|u|d|c)(\d+)/i)
+  if (!match) return null
+  const prefix = match[1].toLowerCase() as PecaCodigoPrefix
+  const number = parseInt(match[2], 10)
+  if (!Number.isFinite(number) || number < 1) return null
+  return { prefix, number }
+}
+
+export function getMaxPecaCodigoNumber(prefix: PecaCodigoPrefix, allCodigos: string[]): number {
+  let max = 0
+  for (const raw of allCodigos) {
+    const parsed = parsePecaCodigoLoose(raw)
+    if (parsed && parsed.prefix === prefix) max = Math.max(max, parsed.number)
+  }
+  return max
+}
+
 export function normalizeCodigoKey(raw: string): string {
   const parsed = parsePecaCodigo(raw)
   if (parsed) return parsed.canonical.toLowerCase()
@@ -97,17 +117,33 @@ export function validatePecaCodigoFormat(raw: string): ValidateOk | ValidateErr 
   return { ok: true, canonical: parsed.canonical }
 }
 
+export interface ValidatePecaCodigoOptions {
+  /** Quando false, aceita códigos legados já cadastrados (ex.: U57A, D52). */
+  strictFormat?: boolean
+}
+
 export function validatePecaCodigoUnique(
   raw: string,
   lists: CodigoListEntry,
   excludePecaId?: string,
+  options?: ValidatePecaCodigoOptions,
 ): ValidateOk | ValidateErr {
-  const format = validatePecaCodigoFormat(raw)
-  if (!format.ok) return format
-  if (isCodigoDuplicated(format.canonical, lists, excludePecaId)) {
-    return { ok: false, error: `O código ${format.canonical} já existe.` }
+  const trimmed = raw.trim()
+  if (!trimmed) return { ok: false, error: 'Informe o código da peça.' }
+
+  if (options?.strictFormat) {
+    const format = validatePecaCodigoFormat(raw)
+    if (!format.ok) return format
+    if (isCodigoDuplicated(format.canonical, lists, excludePecaId)) {
+      return { ok: false, error: `O código ${format.canonical} já existe.` }
+    }
+    return format
   }
-  return format
+
+  if (isCodigoDuplicated(trimmed, lists, excludePecaId)) {
+    return { ok: false, error: `O código ${trimmed} já existe.` }
+  }
+  return { ok: true, canonical: trimmed }
 }
 
 export function validateConjuntoCodigoUnique(
@@ -124,18 +160,18 @@ export function validateConjuntoCodigoUnique(
 }
 
 export function suggestNextPecaCodigo(prefix: PecaCodigoPrefix, allCodigos: string[]): string {
-  let max = 0
-  for (const raw of allCodigos) {
-    const parsed = parsePecaCodigo(raw)
-    if (parsed && parsed.prefix === prefix) max = Math.max(max, parsed.number)
-  }
-  return formatPecaCodigo(prefix, max + 1)
+  return formatPecaCodigo(prefix, getMaxPecaCodigoNumber(prefix, allCodigos) + 1)
 }
 
 export function suggestCodigoForCategoria(categoria: string, allCodigos: string[]): string | null {
   const prefix = categoriaToPrefix(categoria)
   if (!prefix) return null
   return suggestNextPecaCodigo(prefix, allCodigos)
+}
+
+/** Próximo código de conjunto (prefixo C), considerando peças e conjuntos já cadastrados. */
+export function suggestNextConjuntoCodigo(allCodigos: string[]): string {
+  return suggestNextPecaCodigo('c', allCodigos)
 }
 
 const PREFIX_SORT_ORDER: Record<PecaCodigoPrefix, number> = { c: 0, d: 1, u: 2, ud: 3 }
@@ -159,7 +195,7 @@ export function compareCodigoDisplay(a: string, b: string): number {
 
 export function inferPrefixFromCodigos(codigos: string[]): PecaCodigoPrefix {
   for (const raw of codigos) {
-    const parsed = parsePecaCodigo(raw)
+    const parsed = parsePecaCodigoLoose(raw)
     if (parsed) return parsed.prefix
   }
   return 'c'
