@@ -11,6 +11,20 @@ import { PecasPdfModal } from './PecasPdfModal'
 import { SelecionarAvulsasModal } from './SelecionarAvulsasModal'
 import { FormarConjuntoModal } from './FormarConjuntoModal'
 import {
+  calcEngobeCusto,
+  calcEngobeQtdGr,
+  calcEsmalteCusto,
+  calcEsmalteQtdGr,
+  calcTintaCusto,
+  calcTintaQtdMl,
+  getRelacaoGrM2,
+  getRelacaoMlM2,
+  getPrecoUnitario,
+  inferPinturaAplicavelFromDb,
+  resolvePinturaQuantitiesForSave,
+  syncPinturaQuantities,
+} from '@/lib/pinturaCustos'
+import {
   type CodigoListEntry,
   CATEGORIAS_PECA,
   categoriaToPrefix,
@@ -233,6 +247,9 @@ interface PecaRow {
   esmalte_qnt_gr: string
   engobe_qnt_gr: string
   tinta_qnt_gr: string
+  esmalte_aplicavel: boolean
+  engobe_aplicavel: boolean
+  tinta_aplicavel: boolean
   tipo_biscoito: string
   tipo_queima: string
   custo_extra: string
@@ -653,9 +670,9 @@ function calcRowCosts(
   const valEmb = embSel ? embSel.valor : null
   const argSel = argilaItems.find((a) => a.nome === row.tipo_argila)
   const valArg = argSel && nv(row.qnt_argila_kg) > 0 ? nv(row.qnt_argila_kg) * argSel.valor : null
-  const valEsmalte = nv(row.esmalte_qnt_gr) > 0 ? nv(row.esmalte_qnt_gr) * (esmalteItems[0]?.valor ?? 0) : null
-  const valEngobe = nv(row.engobe_qnt_gr) > 0 ? nv(row.engobe_qnt_gr) * (engobeItems[0]?.valor ?? 0) : null
-  const valTinta = nv(row.tinta_qnt_gr) > 0 ? nv(row.tinta_qnt_gr) * (tintaItems[0]?.valor ?? 0) : null
+  const valEsmalte = calcEsmalteCusto(row, esmalteItems)
+  const valEngobe = calcEngobeCusto(row, engobeItems)
+  const valTinta = calcTintaCusto(row, tintaItems)
   const biscSel = biscoitoItems.find((b) => b.nome === row.tipo_biscoito)
   const valBisc = biscSel ? biscSel.valor : null
   const queimaSel = queimaAltaItems.find((q) => q.nome === row.tipo_queima)
@@ -756,6 +773,9 @@ function dbToRow(p: PecaDB): PecaRow {
     esmalte_qnt_gr:  p.esmalte_qnt_gr  != null ? String(p.esmalte_qnt_gr)  : '',
     engobe_qnt_gr:   p.engobe_qnt_gr   != null ? String(p.engobe_qnt_gr)   : '',
     tinta_qnt_gr:    p.tinta_qnt_gr    != null ? String(p.tinta_qnt_gr)    : '',
+    esmalte_aplicavel: inferPinturaAplicavelFromDb(p.esmalte_qnt_gr),
+    engobe_aplicavel:  inferPinturaAplicavelFromDb(p.engobe_qnt_gr),
+    tinta_aplicavel:   inferPinturaAplicavelFromDb(p.tinta_qnt_gr),
     tipo_biscoito:   p.tipo_biscoito   ?? '',
     tipo_queima:     p.tipo_queima     ?? '',
     custo_extra:     p.custo_extra     != null ? String(p.custo_extra)     : '',
@@ -786,6 +806,7 @@ function emptyRow(conjuntoId?: string, conjuntoCodigo?: string, conjuntoNome?: s
     fotos: [], fotosNovas: [], novaPrincipal: false,
     tipo_embalagem: '', tipo_argila: '', qnt_argila_kg: '',
     esmalte_qnt_gr: '', engobe_qnt_gr: '', tinta_qnt_gr: '',
+    esmalte_aplicavel: false, engobe_aplicavel: false, tinta_aplicavel: false,
     tipo_biscoito: '', tipo_queima: '',
     custo_extra: '', margem_venda: String(DEFAULT_MARGEM_VENDA), preco_praticado: '',
     ordem: null, isNew: true, dirty: true,
@@ -1190,6 +1211,45 @@ function ModalCostRow({ label, value, children }: { label: string; value: number
   )
 }
 
+function pinturaCalcHint(
+  area: number,
+  qtd: number,
+  unit: 'gr' | 'ml',
+  relacao: number,
+  relLabel: string,
+): string {
+  if (area <= 0) return `Informe a área pintura (${relLabel})`
+  if (relacao <= 0) return `Configure ${relLabel} na tabela de custos`
+  if (qtd <= 0) return ''
+  return `${qtd.toLocaleString('pt-BR', { maximumFractionDigits: 2 })} ${unit} = ${area.toLocaleString('pt-BR', { maximumFractionDigits: 4 })} m² × ${relacao.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}`
+}
+
+function PinturaAplicavelSelect({
+  aplicavel,
+  onChange,
+  hint,
+}: {
+  aplicavel: boolean
+  onChange: (sim: boolean) => void
+  hint?: string
+}) {
+  return (
+    <div>
+      <select
+        value={aplicavel ? 'sim' : 'nao'}
+        onChange={(e) => onChange(e.target.value === 'sim')}
+        className={MODAL_SEL_FULL}
+      >
+        <option value="nao">Não</option>
+        <option value="sim">Sim</option>
+      </select>
+      {hint && aplicavel && (
+        <p className="font-sans text-[9px] text-muted/70 mt-1">{hint}</p>
+      )}
+    </div>
+  )
+}
+
 interface MaterialCostLine {
   label: string
   unitText: string
@@ -1232,8 +1292,8 @@ function buildMaterialCostLines(
     }
   }
 
-  const qntEsm = nv(piece.esmalte_qnt_gr)
-  if (qntEsm > 0 && esmalteItems[0]) {
+  const qntEsm = calcEsmalteQtdGr(piece, esmalteItems)
+  if (piece.esmalte_aplicavel && qntEsm > 0 && esmalteItems[0]) {
     lines.push({
       label: 'Esmalte',
       unitText: `R$ ${fmt(esmalteItems[0].valor)}/gr × ${qntEsm.toLocaleString('pt-BR', { maximumFractionDigits: 2 })} gr`,
@@ -1241,8 +1301,8 @@ function buildMaterialCostLines(
     })
   }
 
-  const qntEng = nv(piece.engobe_qnt_gr)
-  if (qntEng > 0 && engobeItems[0]) {
+  const qntEng = calcEngobeQtdGr(piece, engobeItems)
+  if (piece.engobe_aplicavel && qntEng > 0 && engobeItems[0]) {
     lines.push({
       label: 'Engobe',
       unitText: `R$ ${fmt(engobeItems[0].valor)}/gr × ${qntEng.toLocaleString('pt-BR', { maximumFractionDigits: 2 })} gr`,
@@ -1250,11 +1310,11 @@ function buildMaterialCostLines(
     })
   }
 
-  const qntTin = nv(piece.tinta_qnt_gr)
-  if (qntTin > 0 && tintaItems[0]) {
+  const qntTin = calcTintaQtdMl(piece, tintaItems)
+  if (piece.tinta_aplicavel && qntTin > 0 && tintaItems[0]) {
     lines.push({
       label: 'Tinta',
-      unitText: `R$ ${fmt(tintaItems[0].valor)}/gr × ${qntTin.toLocaleString('pt-BR', { maximumFractionDigits: 2 })} gr`,
+      unitText: `R$ ${fmt(tintaItems[0].valor)}/ml × ${qntTin.toLocaleString('pt-BR', { maximumFractionDigits: 2 })} ml`,
       total: costs.valTinta ?? 0,
     })
   }
@@ -1694,6 +1754,15 @@ function PecaModalPieceFields({
   const totalFotos = piece.fotos.length + piece.fotosNovas.length
   const precoPraticadoIsAuto = piece.preco_praticado === '' && pricing.precoSugerido > 0
   const precoPraticadoDisplay = precoPraticadoIsAuto ? pricing.precoSugerido.toFixed(2) : piece.preco_praticado
+  const areaPintura = nv(piece.area_pintura)
+
+  function handlePinturaUpdate(changes: Partial<PecaRow>) {
+    const merged = { ...piece, ...changes }
+    onUpdate({
+      ...changes,
+      ...syncPinturaQuantities(merged, esmalteItems, engobeItems, tintaItems),
+    })
+  }
 
   return (
     <section
@@ -1807,7 +1876,8 @@ function PecaModalPieceFields({
           </div>
           <div>
             <label className={MODAL_LBL}>Área pintura (m²)</label>
-            <input type="number" min="0" step="0.0001" value={piece.area_pintura} onChange={(e) => onUpdate({ area_pintura: e.target.value })} placeholder="0" className={MODAL_INP_NUM} />
+            <input type="number" min="0" step="0.0001" value={piece.area_pintura}
+              onChange={(e) => handlePinturaUpdate({ area_pintura: e.target.value })} placeholder="0" className={MODAL_INP_NUM} />
           </div>
           <div>
             <label className={MODAL_LBL}>Horas trabalhadas</label>
@@ -1839,14 +1909,26 @@ function PecaModalPieceFields({
             </div>
             <ModalValor value={valArg} />
           </div>
-          <ModalCostRow label="Esmalte (gr)" value={valEsmalte}>
-            <input type="number" min="0" step="0.01" value={piece.esmalte_qnt_gr} onChange={(e) => onUpdate({ esmalte_qnt_gr: e.target.value })} placeholder="0" className={MODAL_INP_NUM} />
+          <ModalCostRow label="Esmalte — aplicável" value={valEsmalte}>
+            <PinturaAplicavelSelect
+              aplicavel={piece.esmalte_aplicavel}
+              onChange={(sim) => handlePinturaUpdate({ esmalte_aplicavel: sim })}
+              hint={pinturaCalcHint(areaPintura, calcEsmalteQtdGr(piece, esmalteItems), 'gr', getRelacaoGrM2(esmalteItems), 'Relação gr/m²')}
+            />
           </ModalCostRow>
-          <ModalCostRow label="Engobe (gr)" value={valEngobe}>
-            <input type="number" min="0" step="0.01" value={piece.engobe_qnt_gr} onChange={(e) => onUpdate({ engobe_qnt_gr: e.target.value })} placeholder="0" className={MODAL_INP_NUM} />
+          <ModalCostRow label="Engobe — aplicável" value={valEngobe}>
+            <PinturaAplicavelSelect
+              aplicavel={piece.engobe_aplicavel}
+              onChange={(sim) => handlePinturaUpdate({ engobe_aplicavel: sim })}
+              hint={pinturaCalcHint(areaPintura, calcEngobeQtdGr(piece, engobeItems), 'gr', getRelacaoGrM2(engobeItems), 'Relação gr/m²')}
+            />
           </ModalCostRow>
-          <ModalCostRow label="Tinta (gr)" value={valTinta}>
-            <input type="number" min="0" step="0.01" value={piece.tinta_qnt_gr} onChange={(e) => onUpdate({ tinta_qnt_gr: e.target.value })} placeholder="0" className={MODAL_INP_NUM} />
+          <ModalCostRow label="Tinta — aplicável" value={valTinta}>
+            <PinturaAplicavelSelect
+              aplicavel={piece.tinta_aplicavel}
+              onChange={(sim) => handlePinturaUpdate({ tinta_aplicavel: sim })}
+              hint={pinturaCalcHint(areaPintura, calcTintaQtdMl(piece, tintaItems), 'ml', getRelacaoMlM2(tintaItems), 'Relação ml/m²')}
+            />
           </ModalCostRow>
         </div>
       </div>
@@ -3885,6 +3967,7 @@ export function PecasTable({
     const precoPraticado = row.preco_praticado !== ''
       ? parseFloat(row.preco_praticado) || null
       : (pricing.precoSugerido > 0 ? pricing.precoSugerido : null)
+    const pinturaQtd = resolvePinturaQuantitiesForSave(row, esmalteItems, engobeItems, tintaItems)
     const result = await salvarPeca({
       id: row.id, codigo: row.codigo, nome: row.nome, dimensoes: row.dimensoes,
       descricao: emConjunto ? null : (row.descricao || null),
@@ -3899,9 +3982,9 @@ export function PecasTable({
       fotos: allFotos,
       tipo_embalagem: row.tipo_embalagem, tipo_argila: row.tipo_argila,
       qnt_argila_kg:  row.qnt_argila_kg  !== '' ? parseFloat(row.qnt_argila_kg)  : null,
-      esmalte_qnt_gr: row.esmalte_qnt_gr !== '' ? parseFloat(row.esmalte_qnt_gr) : null,
-      engobe_qnt_gr:  row.engobe_qnt_gr  !== '' ? parseFloat(row.engobe_qnt_gr)  : null,
-      tinta_qnt_gr:   row.tinta_qnt_gr   !== '' ? parseFloat(row.tinta_qnt_gr)   : null,
+      esmalte_qnt_gr: pinturaQtd.esmalte_qnt_gr,
+      engobe_qnt_gr:  pinturaQtd.engobe_qnt_gr,
+      tinta_qnt_gr:   pinturaQtd.tinta_qnt_gr,
       tipo_biscoito: row.tipo_biscoito, tipo_queima: row.tipo_queima,
       custo_extra:     row.custo_extra     !== '' ? parseFloat(row.custo_extra)     : null,
       margem_venda:    pricing.margem,
