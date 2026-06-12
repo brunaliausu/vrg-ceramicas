@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import Image from 'next/image'
 import { StatusBadge } from '@/components/ui/StatusBadge'
+import { formatCategoriaDisplay } from '@/lib/categoriaLoja'
 import type { Produto } from '@/types'
 
 interface ProductCardProps {
@@ -43,7 +44,7 @@ export function ProductCard({ produto }: ProductCardProps) {
 
       {/* Info */}
       <div className="space-y-0.5">
-        <p className="font-sans text-xs tracking-widest uppercase text-muted">{categoria}</p>
+        <p className="font-sans text-xs tracking-widest uppercase text-muted">{formatCategoriaDisplay(categoria)}</p>
         <h3 className="font-serif text-base font-normal text-carvao group-hover:text-terracota transition-colors leading-snug">
           {nome}
         </h3>

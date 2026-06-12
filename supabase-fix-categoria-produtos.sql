@@ -1,7 +1,9 @@
 -- ============================================================
 -- VRG Cerâmicas — Atualiza categorias da tabela produtos (loja)
 -- Execute no SQL Editor do Supabase (Dashboard → SQL → New query)
--- Corrige: produtos_categoria_check ao salvar peças no admin
+-- Depois de executar este script, defina na Vercel:
+-- PRODUTOS_CATEGORIA_MIGRATED=true
+-- (e faça redeploy do site)
 -- ============================================================
 
 ALTER TABLE public.produtos

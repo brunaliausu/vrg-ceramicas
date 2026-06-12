@@ -1,7 +1,7 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
-import { normalizeCategoriaLoja } from '@/lib/categoriaLoja'
+import { normalizeCategoriaLoja, categoriaParaTabelaProdutos } from '@/lib/categoriaLoja'
 import { revalidatePath } from 'next/cache'
 
 export interface PecaPayload {
@@ -329,7 +329,7 @@ export async function salvarPeca(peca: PecaPayload): Promise<ActionResult> {
           id:              peca.id,
           nome:            peca.nome             || 'Sem nome',
           slug:            slugify(peca.nome || 'peca', peca.id),
-          categoria:       normalizeCategoriaLoja(peca.categoria),
+          categoria:       categoriaParaTabelaProdutos(peca.categoria),
           descricao:       peca.descricao        || null,
           preco:           peca.preco_venda,
           status:          statusLoja,
@@ -386,7 +386,7 @@ export async function salvarConjunto(conjunto: ConjuntoPayload): Promise<ActionR
           id:               conjunto.id,
           nome:             conjunto.nome     || conjunto.codigo || 'Conjunto',
           slug:             slugify(conjunto.nome || conjunto.codigo || 'conjunto', conjunto.id),
-          categoria:        normalizeCategoriaLoja(conjunto.categoria),
+          categoria:        categoriaParaTabelaProdutos(conjunto.categoria),
           descricao:        conjunto.descricao || null,
           preco:            conjunto.preco_venda,
           status:           statusLoja,

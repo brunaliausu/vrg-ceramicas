@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { ProductCard } from '@/components/product/ProductCard'
 import type { Produto, Categoria } from '@/types'
 import { CATEGORIAS } from '@/types'
+import { categoriasParaFiltroLoja } from '@/lib/categoriaLoja'
 
 interface SearchParams {
   categoria?: string
@@ -34,7 +35,8 @@ async function getProdutos(filtros: SearchParams): Promise<Produto[]> {
     }
 
     if (filtros.categoria) {
-      query = query.eq('categoria', filtros.categoria)
+      const cats = categoriasParaFiltroLoja(filtros.categoria as Categoria)
+      query = cats.length === 1 ? query.eq('categoria', cats[0]) : query.in('categoria', cats)
     }
 
     if (filtros.colecao) {
