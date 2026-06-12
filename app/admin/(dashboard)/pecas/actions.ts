@@ -1,6 +1,7 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
+import { normalizeCategoriaLoja } from '@/lib/categoriaLoja'
 import { revalidatePath } from 'next/cache'
 
 export interface PecaPayload {
@@ -70,6 +71,9 @@ export interface ActionResult {
 const SCHEMA_MIGRATION_HINT =
   'Execute o arquivo supabase-fix-precificacao.sql no SQL Editor do Supabase (Dashboard → SQL) e tente salvar novamente.'
 
+const CATEGORIA_MIGRATION_HINT =
+  'Execute o arquivo supabase-fix-categoria-produtos.sql no SQL Editor do Supabase (Dashboard → SQL) e tente salvar novamente.'
+
 function isMissingColumnError(message: string): boolean {
   return /schema cache/i.test(message)
     || /could not find the/i.test(message)
@@ -79,6 +83,9 @@ function isMissingColumnError(message: string): boolean {
 function formatDbError(message: string): string {
   if (isMissingColumnError(message)) {
     return `${message}\n\n${SCHEMA_MIGRATION_HINT}`
+  }
+  if (/produtos_categoria_check/i.test(message)) {
+    return `${message}\n\n${CATEGORIA_MIGRATION_HINT}`
   }
   return message
 }
@@ -322,7 +329,7 @@ export async function salvarPeca(peca: PecaPayload): Promise<ActionResult> {
           id:              peca.id,
           nome:            peca.nome             || 'Sem nome',
           slug:            slugify(peca.nome || 'peca', peca.id),
-          categoria:       peca.categoria        || 'Utilitários',
+          categoria:       normalizeCategoriaLoja(peca.categoria),
           descricao:       peca.descricao        || null,
           preco:           peca.preco_venda,
           status:          statusLoja,
@@ -332,7 +339,7 @@ export async function salvarPeca(peca: PecaPayload): Promise<ActionResult> {
           imagens:         peca.fotos,
           destaque_home:   destaqueHome,
         })
-      if (errProd) return { ok: false, error: `Loja: ${errProd.message}` }
+      if (errProd) return { ok: false, error: formatDbError(`Loja: ${errProd.message}`) }
     } else {
       await supabase
         .from('produtos')
@@ -379,7 +386,7 @@ export async function salvarConjunto(conjunto: ConjuntoPayload): Promise<ActionR
           id:               conjunto.id,
           nome:             conjunto.nome     || conjunto.codigo || 'Conjunto',
           slug:             slugify(conjunto.nome || conjunto.codigo || 'conjunto', conjunto.id),
-          categoria:        conjunto.categoria || 'Utilitários',
+          categoria:        normalizeCategoriaLoja(conjunto.categoria),
           descricao:        conjunto.descricao || null,
           preco:            conjunto.preco_venda,
           status:           statusLoja,
@@ -388,7 +395,7 @@ export async function salvarConjunto(conjunto: ConjuntoPayload): Promise<ActionR
           imagens:          conjunto.fotos,
           destaque_home:    destaqueHome,
         })
-      if (errProd) return { ok: false, error: `Loja: ${errProd.message}` }
+      if (errProd) return { ok: false, error: formatDbError(`Loja: ${errProd.message}`) }
     } else {
       await supabase
         .from('produtos')

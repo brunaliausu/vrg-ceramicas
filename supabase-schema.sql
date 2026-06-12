@@ -8,7 +8,7 @@ create table public.produtos (
   id uuid default gen_random_uuid() primary key,
   nome text not null,
   slug text not null unique,
-  categoria text not null check (categoria in ('Para a Mesa', 'Para a Casa', 'Esculturais')),
+  categoria text not null check (categoria in ('Utilitários', 'Decorativos', 'Conjuntos', 'Utilitário/Decorativo')),
   colecao text,
   descricao text,
   preco numeric(10, 2),
