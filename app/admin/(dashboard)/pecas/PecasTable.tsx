@@ -10,6 +10,8 @@ import { generatePecasPdf, type PecasPdfRow, type PdfColumnId } from './generate
 import { PecasPdfModal } from './PecasPdfModal'
 import { SelecionarAvulsasModal } from './SelecionarAvulsasModal'
 import { FormarConjuntoModal } from './FormarConjuntoModal'
+import { DuplicatePecaModal, type DuplicatePecaMode } from './DuplicatePecaModal'
+import { ConfirmDeleteModal } from './ConfirmDeleteModal'
 import {
   calcEngobeCusto,
   calcEngobeQtdGr,
@@ -29,6 +31,8 @@ import {
   CATEGORIAS_PECA,
   categoriaToPrefix,
   compareCodigoDisplay,
+  getCodigoMae,
+  assignVariantCodigosForSameCodeCopy,
   inferPrefixFromCodigos,
   parsePecaCodigoLoose,
   suggestCodigoForCategoria,
@@ -269,6 +273,14 @@ interface PecaRow {
   vendido_em: string | null
 }
 
+interface SameCodeDuplicateSession {
+  kind: 'conjunto' | 'peca'
+  sourceConjuntoId?: string
+  sourcePecaId?: string
+  draftConjuntoId?: string
+  draftPecaIds: string[]
+}
+
 // Dados gerenciados a nível do conjunto (não da peça individual)
 interface ConjuntoData {
   descricao: string
@@ -437,6 +449,23 @@ function sortRowsForDisplay(rows: PecaRow[]): PecaRow[] {
     const endA = atEnd(a) ? 1 : 0
     const endB = atEnd(b) ? 1 : 0
     if (endA !== endB) return endA - endB
+
+    // Conjuntos da mesma família: original (C4) antes das variantes (C4-02…)
+    if (a.conjunto_id && b.conjunto_id && a.conjunto_id !== b.conjunto_id) {
+      const conjCmp = compareCodigoDisplay(a.conjunto_codigo, b.conjunto_codigo)
+      if (conjCmp !== 0) return conjCmp
+    }
+
+    // Peças avulsas da mesma família: original (U1) antes das variantes (U1-02…)
+    if (!a.conjunto_id && !b.conjunto_id) {
+      const ma = getCodigoMae(a.codigo)
+      const mb = getCodigoMae(b.codigo)
+      if (ma === mb && ma) {
+        const famCmp = compareCodigoDisplay(a.codigo, b.codigo)
+        if (famCmp !== 0) return famCmp
+      }
+    }
+
     return (a.ordem ?? 0) - (b.ordem ?? 0) || compareCodigoDisplay(a.codigo, b.codigo)
   })
 }
@@ -827,6 +856,22 @@ function suggestNextPecaCodigoFromSource(source: PecaRow, allCodigos: string[]):
   return suggestNextPecaCodigo(prefix, allCodigos)
 }
 
+function findFamiliaInsertIndex(rows: PecaRow[], sourceRowId: string): number {
+  const source = rows.find((r) => r.id === sourceRowId)
+  if (!source || source.conjunto_id) {
+    const idx = rows.findIndex((r) => r.id === sourceRowId)
+    return idx === -1 ? rows.length : idx + 1
+  }
+  const mother = getCodigoMae(source.codigo)
+  let insertAt = rows.findIndex((r) => r.id === sourceRowId) + 1
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i]
+    if (r.conjunto_id) continue
+    if (getCodigoMae(r.codigo) === mother) insertAt = i + 1
+  }
+  return insertAt
+}
+
 function clonePecaAsNew(source: PecaRow, overrides: Partial<PecaRow>): PecaRow {
   return {
     ...source,
@@ -864,6 +909,13 @@ const numInput = 'bg-white border border-pedra px-1.5 py-1 font-sans text-xs tex
 const textInput = 'w-full bg-transparent border-b border-transparent hover:border-pedra focus:border-terracota font-sans text-xs text-carvao placeholder:text-muted/30 focus:outline-none transition-colors py-0.5'
 const selectCls = 'bg-white border border-pedra px-2 py-1.5 font-sans text-sm text-carvao focus:outline-none focus:border-terracota transition-colors appearance-none cursor-pointer'
 const tableSelectCls = 'w-full bg-white border border-pedra px-1.5 py-1 font-sans text-[11px] text-carvao focus:outline-none focus:border-terracota transition-colors appearance-none cursor-pointer min-w-0'
+
+const TABLE_ACTION_STACK = 'flex flex-col items-stretch gap-1.5 w-[5.5rem] mx-auto'
+const TABLE_ACTION_BTN = 'w-full font-sans text-[10px] px-2 py-0.5 border transition-colors whitespace-nowrap text-center'
+const TABLE_ACTION_EDIT = `${TABLE_ACTION_BTN} text-terracota hover:text-carvao border-terracota/40 hover:bg-areia/60`
+const TABLE_ACTION_DUP = `${TABLE_ACTION_BTN} text-muted hover:text-carvao border-pedra hover:bg-areia/60`
+const TABLE_ACTION_DEL = `${TABLE_ACTION_BTN} text-red-500/80 hover:text-red-600 border-red-200 hover:bg-red-50`
+const TABLE_ACTION_ADD = `${TABLE_ACTION_BTN} text-terracota hover:text-carvao border-terracota/30 hover:bg-areia/60 flex items-center justify-center gap-0.5`
 
 // Visual do conjunto — paleta VRG (terracota / areia / carvao)
 const CONJ_HEADER_ROW = 'border-t-2 border-terracota/35 border-b border-terracota/15 bg-[#EDE8DF]'
@@ -2652,9 +2704,17 @@ export function PecasTable({
   const [formConjuntoModal, setFormConjuntoModal] = useState<{ rowIds: string[] } | null>(null)
   const [formConjuntoError, setFormConjuntoError] = useState<string | null>(null)
   const [codigoErrors, setCodigoErrors] = useState<Record<string, string>>({})
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false)
   const [bulkDeleting, setBulkDeleting] = useState(false)
+  const [deleteConfirm, setDeleteConfirm] = useState<
+    | { type: 'peca'; id: string; codigo: string; nome: string }
+    | { type: 'conjunto'; id: string; codigo: string; nome: string }
+    | null
+  >(null)
+  const [deleteInProgress, setDeleteInProgress] = useState(false)
+  const [duplicatePecaPrompt, setDuplicatePecaPrompt] = useState<{ rowId: string } | null>(null)
+  const [duplicateConjuntoPrompt, setDuplicateConjuntoPrompt] = useState<{ conjuntoId: string } | null>(null)
+  const [sameCodeDuplicateSession, setSameCodeDuplicateSession] = useState<SameCodeDuplicateSession | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const directInputRefs = useRef<Map<string, HTMLInputElement>>(new Map())
@@ -2706,10 +2766,13 @@ export function PecasTable({
     return Array.from(map.values())
   }, [rows])
 
-  const filteredRows = useMemo(
-    () => sortRowsForDisplay(filterRowsBySearch(rows, searchQuery)),
-    [rows, searchQuery],
-  )
+  const filteredRows = useMemo(() => {
+    const hiddenDraftIds = sameCodeDuplicateSession
+      ? new Set(sameCodeDuplicateSession.draftPecaIds)
+      : null
+    const visible = hiddenDraftIds ? rows.filter((r) => !hiddenDraftIds.has(r.id)) : rows
+    return sortRowsForDisplay(filterRowsBySearch(visible, searchQuery))
+  }, [rows, searchQuery, sameCodeDuplicateSession])
   const displayItems = useMemo(() => buildDisplay(filteredRows), [filteredRows])
   const tableDisplayItems = useMemo(() => {
     if (pdfSelectionMode !== 'feira') return displayItems
@@ -3029,25 +3092,33 @@ export function PecasTable({
     setCodigoError(`conjunto:${conjuntoId}`, null)
   }
 
-  function validateAllCodigosBeforeSave(scope?: { pecaIds?: string[]; conjuntoIds?: string[] }): string | null {
-    const lists = buildCodigoLists()
+  function validateAllCodigosBeforeSave(
+    scope?: { pecaIds?: string[]; conjuntoIds?: string[] },
+    rowsSource: PecaRow[] = rows,
+  ): string | null {
+    const pecaCodigos = rowsSource.map((r) => ({ id: r.id, codigo: r.codigo }))
+    const conjuntoIds = new Set<string>()
+    rowsSource.forEach((r) => { if (r.conjunto_id) conjuntoIds.add(r.conjunto_id) })
+    const conjuntoCodigos = [...conjuntoIds].map((conjuntoId) => {
+      const ref = rowsSource.find((r) => r.conjunto_id === conjuntoId)
+      return { conjuntoId, codigo: ref?.conjunto_codigo ?? '' }
+    })
+    const lists: CodigoListEntry = { pecaCodigos, conjuntoCodigos }
+
     const seen = new Set<string>()
     const pecaRows = scope?.pecaIds
-      ? rows.filter((r) => scope.pecaIds!.includes(r.id))
-      : rows
+      ? rowsSource.filter((r) => scope.pecaIds!.includes(r.id))
+      : rowsSource
     for (const r of pecaRows) {
       if (!r.codigo.trim()) continue
       const result = validatePecaCodigoUnique(r.codigo, lists, r.id, { strictFormat: r.isNew })
       if (!result.ok) return result.error
-      const key = normalizeCodigoKey(result.canonical)
-      if (seen.has(key)) return `O código ${result.canonical} já existe.`
-      seen.add(key)
     }
-    const conjuntoIds = scope
+    const scopeConjuntoIds = scope
       ? (scope.conjuntoIds ?? [])
-      : [...new Set(rows.map((r) => r.conjunto_id).filter(Boolean) as string[])]
-    for (const conjuntoId of conjuntoIds) {
-      const ref = rows.find((r) => r.conjunto_id === conjuntoId)
+      : [...new Set(rowsSource.map((r) => r.conjunto_id).filter(Boolean) as string[])]
+    for (const conjuntoId of scopeConjuntoIds) {
+      const ref = rowsSource.find((r) => r.conjunto_id === conjuntoId)
       const codigo = ref?.conjunto_codigo ?? ''
       if (!codigo.trim()) continue
       const result = validateConjuntoCodigoUnique(codigo, lists, conjuntoId)
@@ -3227,7 +3298,98 @@ export function PecasTable({
     clearPublicationFieldHighlights()
   }
 
-  function duplicatePeca(rowId: string) {
+  function openDeletePecaConfirm(row: PecaRow) {
+    setDeleteConfirm({ type: 'peca', id: row.id, codigo: row.codigo, nome: row.nome })
+  }
+
+  function openDeleteConjuntoConfirm(conjuntoId: string) {
+    const ref = rows.find((r) => r.conjunto_id === conjuntoId)
+    setDeleteConfirm({
+      type: 'conjunto',
+      id: conjuntoId,
+      codigo: ref?.conjunto_codigo ?? '',
+      nome: ref?.conjunto_nome ?? '',
+    })
+  }
+
+  async function executeDeleteConfirm() {
+    if (!deleteConfirm) return
+    setDeleteInProgress(true)
+    try {
+      if (deleteConfirm.type === 'peca') {
+        await handleDelete(deleteConfirm.id)
+      } else {
+        await handleDeleteConjunto(deleteConfirm.id)
+      }
+      setDeleteConfirm(null)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Erro ao excluir')
+    } finally {
+      setDeleteInProgress(false)
+    }
+  }
+
+  function openDuplicateConjunto(conjuntoId: string) {
+    const pieces = getConjuntoPiecesFromRows(rows, conjuntoId)
+    if (pieces.length === 0) return
+    setDuplicateConjuntoPrompt({ conjuntoId })
+  }
+
+  function openDuplicatePeca(rowId: string) {
+    const source = rows.find((r) => r.id === rowId)
+    if (!source || source.conjunto_id) return
+    setDuplicatePecaPrompt({ rowId })
+  }
+
+  function revertSameCodeDuplicateSession() {
+    if (!sameCodeDuplicateSession) return
+    const session = sameCodeDuplicateSession
+    const draftIds = new Set(session.draftPecaIds)
+    setRows((prev) => prev.filter((r) => !draftIds.has(r.id)))
+    if (session.draftConjuntoId) {
+      setConjuntosData((prev) => {
+        const next = new Map(prev)
+        next.delete(session.draftConjuntoId!)
+        return next
+      })
+    }
+    setSameCodeDuplicateSession(null)
+  }
+
+  function duplicatePecaSameCode(rowId: string) {
+    const source = rows.find((r) => r.id === rowId)
+    if (!source || source.conjunto_id) return
+
+    const allCodes = [...getAllCodigoStrings()]
+    const copyCodigo = assignVariantCodigosForSameCodeCopy([source.codigo], allCodes)[0]
+
+    const newRow = clonePecaAsNew(source, {
+      codigo: copyCodigo,
+      conjunto_id: null,
+      conjunto_codigo: '',
+      conjunto_nome: '',
+      ordem: null,
+    })
+
+    setRows((prev) => [...prev, newRow])
+    setSameCodeDuplicateSession({
+      kind: 'peca',
+      sourcePecaId: rowId,
+      draftPecaIds: [newRow.id],
+    })
+    setDuplicatePecaPrompt(null)
+    setEditModalLockedConjunto(false)
+    setEditModal(newRow.id)
+    setSaveStatus('idle')
+    clearPublicationFieldHighlights()
+  }
+
+  function duplicatePeca(rowId: string, mode: DuplicatePecaMode) {
+    if (mode === 'same-code') {
+      duplicatePecaSameCode(rowId)
+      return
+    }
+
     const source = rows.find((r) => r.id === rowId)
     if (!source || source.conjunto_id) return
 
@@ -3242,10 +3404,10 @@ export function PecasTable({
     })
 
     setRows((prev) => {
-      const idx = prev.findIndex((r) => r.id === rowId)
-      if (idx === -1) return [...prev, newRow]
-      return [...prev.slice(0, idx + 1), newRow, ...prev.slice(idx + 1)]
+      const insertAt = findFamiliaInsertIndex(prev, rowId)
+      return [...prev.slice(0, insertAt), newRow, ...prev.slice(insertAt)]
     })
+    setDuplicatePecaPrompt(null)
     setEditModalLockedConjunto(false)
     setEditModal(newRow.id)
     setSaveStatus('idle')
@@ -3255,7 +3417,66 @@ export function PecasTable({
     }, 150)
   }
 
-  function duplicateConjunto(conjuntoId: string) {
+  function duplicateConjuntoSameCode(conjuntoId: string) {
+    const pieces = getConjuntoPiecesFromRows(rows, conjuntoId)
+    if (pieces.length === 0) return
+
+    const ref = pieces[0]
+    const sourceCdata = conjuntosData.get(conjuntoId) ?? defaultConjuntoData()
+
+    const allCodes = [...getAllCodigoStrings()]
+    const working = [...allCodes]
+
+    const copyConjuntoCodigo = assignVariantCodigosForSameCodeCopy([ref.conjunto_codigo], working)[0]
+    working.push(copyConjuntoCodigo)
+    const copyPieceCodigos = assignVariantCodigosForSameCodeCopy(
+      pieces.map((p) => p.codigo),
+      working,
+    )
+
+    const newConjuntoId = crypto.randomUUID()
+    const newConjuntoNome = ref.conjunto_nome
+    const pieceStatus = sourceCdata.status === 'vendido' ? '' : sourceCdata.status
+
+    const newPieces = pieces.map((piece, idx) => clonePecaAsNew(piece, {
+      codigo: copyPieceCodigos[idx],
+      conjunto_id: newConjuntoId,
+      conjunto_codigo: copyConjuntoCodigo,
+      conjunto_nome: newConjuntoNome,
+      status: pieceStatus,
+      categoria: '',
+      descricao: '',
+      fenearte: false,
+      ordem: idx,
+    }))
+
+    setRows((prev) => [...prev, ...newPieces])
+
+    setConjuntosData((prev) => {
+      const next = new Map(prev)
+      next.set(newConjuntoId, cloneConjuntoDataAsNew(sourceCdata))
+      return next
+    })
+
+    setSameCodeDuplicateSession({
+      kind: 'conjunto',
+      sourceConjuntoId: conjuntoId,
+      draftConjuntoId: newConjuntoId,
+      draftPecaIds: newPieces.map((p) => p.id),
+    })
+    setDuplicateConjuntoPrompt(null)
+    setEditModalLockedConjunto(true)
+    setEditModal(newPieces[0].id)
+    setSaveStatus('idle')
+    clearPublicationFieldHighlights()
+  }
+
+  function duplicateConjunto(conjuntoId: string, mode: DuplicatePecaMode) {
+    if (mode === 'same-code') {
+      duplicateConjuntoSameCode(conjuntoId)
+      return
+    }
+
     const pieces = getConjuntoPiecesFromRows(rows, conjuntoId)
     if (pieces.length === 0) return
 
@@ -3267,15 +3488,9 @@ export function PecasTable({
     allCodes.push(newConjuntoCodigo)
     const newConjuntoNome = ref.conjunto_nome
     const pieceStatus = sourceCdata.status === 'vendido' ? '' : sourceCdata.status
-    const conjuntoPrefix = sourceCdata.categoria ? categoriaToPrefix(sourceCdata.categoria) : null
 
     const newPieces = pieces.map((piece, idx) => {
-      let newPieceCodigo: string
-      if (conjuntoPrefix) {
-        newPieceCodigo = suggestNextPecaCodigo(conjuntoPrefix, allCodes)
-      } else {
-        newPieceCodigo = suggestNextPecaCodigoFromSource(piece, allCodes)
-      }
+      const newPieceCodigo = suggestNextPecaCodigoFromSource(piece, allCodes)
       allCodes.push(newPieceCodigo)
       return clonePecaAsNew(piece, {
         codigo: newPieceCodigo,
@@ -3303,6 +3518,7 @@ export function PecasTable({
       if (lastIdx === -1) return [...prev, ...newPieces]
       return [...prev.slice(0, lastIdx + 1), ...newPieces, ...prev.slice(lastIdx + 1)]
     })
+    setDuplicateConjuntoPrompt(null)
     setEditModalLockedConjunto(true)
     setEditModal(newPieces[0].id)
     setSaveStatus('idle')
@@ -3614,6 +3830,19 @@ export function PecasTable({
 
   function closeEditModal() {
     const id = editModal
+
+    if (id && sameCodeDuplicateSession?.draftPecaIds.includes(id)) {
+      revertSameCodeDuplicateSession()
+      setEditModal(null)
+      setEditModalLockedConjunto(false)
+      setExibirSitePrompt(null)
+      setModalSaveError(null)
+      setScrollToPieceId(null)
+      setHighlightPieceId(null)
+      clearPublicationFieldHighlights()
+      return
+    }
+
     if (id) {
       const row = rows.find((r) => r.id === id)
       if (row?.isNew) {
@@ -3704,15 +3933,40 @@ export function PecasTable({
   }
 
   function removePieceFromModal(pieceId: string) {
+    void removePieceFromModalAsync(pieceId)
+  }
+
+  async function removePieceFromModalAsync(pieceId: string) {
     const row = rows.find((r) => r.id === pieceId)
-    if (!row?.isNew) return
-    row.fotosNovas.forEach((f) => URL.revokeObjectURL(f.preview))
-    setRows((prev) => prev.filter((r) => r.id !== pieceId))
-    if (editModal === pieceId) {
-      const remaining = rows.filter((r) => r.conjunto_id === row.conjunto_id && r.isNew && r.id !== pieceId)
-      setEditModal(remaining[0]?.id ?? null)
+    if (!row?.conjunto_id) return
+
+    const conjuntoId = row.conjunto_id
+    const count = rows.filter((r) => r.conjunto_id === conjuntoId).length
+    if (count <= 1) return
+
+    if (row.isNew) {
+      row.fotosNovas.forEach((f) => URL.revokeObjectURL(f.preview))
+      setRows((prev) => prev.filter((r) => r.id !== pieceId))
+      if (editModal === pieceId) {
+        const remaining = rows.filter((r) => r.conjunto_id === conjuntoId && r.id !== pieceId)
+        setEditModal(remaining[0]?.id ?? null)
+      }
+      setSaveStatus('idle')
+      return
     }
-    setSaveStatus('idle')
+
+    try {
+      const updatedRows = await deletePecaFromDb(pieceId, rows)
+      setRows(updatedRows)
+      setSaveStatus('idle')
+      if (editModal === pieceId) {
+        const remaining = updatedRows.filter((r) => r.conjunto_id === conjuntoId)
+        setEditModal(remaining[0]?.id ?? null)
+        if (remaining.length === 0) closeEditModal()
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Erro ao remover peça do conjunto')
+    }
   }
 
   // ── Foto mutations (peças) ─────────────────────────────────────────────────
@@ -3879,14 +4133,16 @@ export function PecasTable({
   }
 
   async function handleDelete(id: string) {
-    try {
-      const updatedRows = await deletePecaFromDb(id, rows)
-      setRows(updatedRows)
-      setConfirmDelete(null)
-      if (editModal === id) closeEditModal()
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Erro ao excluir')
-    }
+    const updatedRows = await deletePecaFromDb(id, rows)
+    setRows(updatedRows)
+    if (editModal === id) closeEditModal()
+  }
+
+  async function handleDeleteConjunto(conjuntoId: string) {
+    const updatedRows = await deleteConjuntoFromDb(conjuntoId, rows)
+    setRows(updatedRows)
+    const editingInConjunto = editModal && rows.some((r) => r.id === editModal && r.conjunto_id === conjuntoId)
+    if (editingInConjunto) closeEditModal()
   }
 
   async function handleBulkDelete() {
@@ -4049,19 +4305,19 @@ export function PecasTable({
     return allFotos
   }
 
-  async function persistEditModalSession(editRow: PecaRow) {
+  async function persistEditModalSession(editRow: PecaRow, rowsSnapshot: PecaRow[] = rows) {
     const supabase = createClient()
     if (editRow.conjunto_id) {
       const conjuntoId = editRow.conjunto_id
-      const pieces = rows.filter((r) => r.conjunto_id === conjuntoId)
-      for (const p of pieces.filter((r) => r.dirty)) {
+      const pieces = rowsSnapshot.filter((r) => r.conjunto_id === conjuntoId)
+      for (const p of pieces.filter((r) => r.dirty || r.isNew)) {
         const allFotos = await persistPecaRow(supabase, p)
         setRows((prev) => prev.map((r) => r.id === p.id
           ? { ...r, fotos: allFotos, fotosNovas: [], novaPrincipal: false, isNew: false, dirty: false }
           : r))
       }
       const cdata = conjuntosData.get(conjuntoId) ?? defaultConjuntoData()
-      const conjuntoNeedsSave = cdata.dirty || pieces.some((p) => p.dirty)
+      const conjuntoNeedsSave = cdata.dirty || pieces.some((p) => p.dirty || p.isNew)
       if (conjuntoNeedsSave) {
         const allFotos = await persistConjunto(supabase, conjuntoId, cdata, pieces)
         setConjuntosData((prev) => {
@@ -4070,7 +4326,7 @@ export function PecasTable({
           return next
         })
       }
-    } else if (editRow.dirty) {
+    } else if (editRow.dirty || editRow.isNew) {
       const allFotos = await persistPecaRow(supabase, editRow)
       setRows((prev) => prev.map((r) => r.id === editRow.id
         ? { ...r, fotos: allFotos, fotosNovas: [], novaPrincipal: false, isNew: false, dirty: false }
@@ -4174,12 +4430,28 @@ export function PecasTable({
 
   async function handleModalSave() {
     if (!editRowModal) return
-    const modalScope = editRowModal.conjunto_id
-      ? {
-          pecaIds: rows.filter((r) => r.conjunto_id === editRowModal.conjunto_id).map((r) => r.id),
-          conjuntoIds: [editRowModal.conjunto_id],
-        }
-      : { pecaIds: [editRowModal.id] }
+
+    const session = sameCodeDuplicateSession
+    let modalScope: { pecaIds?: string[]; conjuntoIds?: string[] }
+    if (session?.kind === 'conjunto' && session.sourceConjuntoId && session.draftConjuntoId) {
+      modalScope = {
+        pecaIds: [
+          ...rows.filter((r) => r.conjunto_id === session.sourceConjuntoId).map((r) => r.id),
+          ...rows.filter((r) => r.conjunto_id === session.draftConjuntoId).map((r) => r.id),
+        ],
+        conjuntoIds: [session.sourceConjuntoId, session.draftConjuntoId],
+      }
+    } else if (session?.kind === 'peca' && session.sourcePecaId) {
+      modalScope = { pecaIds: [session.sourcePecaId, ...session.draftPecaIds] }
+    } else if (editRowModal.conjunto_id) {
+      modalScope = {
+        pecaIds: rows.filter((r) => r.conjunto_id === editRowModal.conjunto_id).map((r) => r.id),
+        conjuntoIds: [editRowModal.conjunto_id],
+      }
+    } else {
+      modalScope = { pecaIds: [editRowModal.id] }
+    }
+
     const codigoErr = validateAllCodigosBeforeSave(modalScope)
     if (codigoErr) {
       setModalSaveError(codigoErr)
@@ -4188,7 +4460,32 @@ export function PecasTable({
     setModalSaving(true)
     setModalSaveError(null)
     try {
-      await persistEditModalSession(editRowModal)
+      const draftRow = rows.find((r) => r.id === editRowModal.id) ?? editRowModal
+      await persistEditModalSession(draftRow, rows)
+
+      if (session?.kind === 'conjunto' && session.sourceConjuntoId && session.draftConjuntoId) {
+        setRows((prev) => {
+          const draftPieces = prev.filter((r) => r.conjunto_id === session.draftConjuntoId)
+          const withoutDraft = prev.filter((r) => r.conjunto_id !== session.draftConjuntoId)
+          let lastIdx = -1
+          for (let i = 0; i < withoutDraft.length; i++) {
+            if (withoutDraft[i].conjunto_id === session.sourceConjuntoId) lastIdx = i
+          }
+          if (lastIdx === -1) return prev
+          return [...withoutDraft.slice(0, lastIdx + 1), ...draftPieces, ...withoutDraft.slice(lastIdx + 1)]
+        })
+      } else if (session?.kind === 'peca' && session.sourcePecaId && session.draftPecaIds[0]) {
+        const draftId = session.draftPecaIds[0]
+        setRows((prev) => {
+          const draft = prev.find((r) => r.id === draftId)
+          if (!draft) return prev
+          const withoutDraft = prev.filter((r) => r.id !== draftId)
+          const insertAt = findFamiliaInsertIndex(withoutDraft, session.sourcePecaId!)
+          return [...withoutDraft.slice(0, insertAt), draft, ...withoutDraft.slice(insertAt)]
+        })
+      }
+
+      setSameCodeDuplicateSession(null)
       setExibirSitePrompt(
         editRowModal.conjunto_id
           ? { type: 'conjunto', id: editRowModal.conjunto_id }
@@ -4270,35 +4567,37 @@ export function PecasTable({
   const conjuntoRowModal = conjuntoModal ? rows.find((r) => r.id === conjuntoModal) ?? null : null
   const editRowModal = editModal ? rows.find((r) => r.id === editModal) ?? null : null
   return (
-    <div className="flex flex-col flex-1 min-h-0 gap-4">
+    <div className="flex flex-col flex-1 min-h-0 gap-2">
       {migrationWarning && (
-        <div className="shrink-0 px-4 py-3 bg-amber-50 border border-amber-300 rounded-sm">
+        <div className="shrink-0 px-3 py-2 bg-amber-50 border border-amber-300 rounded-sm">
           <p className="font-sans text-xs font-semibold text-amber-900">Migração do banco pendente</p>
-          <p className="font-sans text-xs text-amber-800 mt-1 leading-relaxed break-words">{migrationWarning}</p>
-          <p className="font-sans text-[10px] text-amber-700/80 mt-2">
+          <p className="font-sans text-[11px] text-amber-800 mt-0.5 leading-snug break-words">{migrationWarning}</p>
+          <p className="font-sans text-[10px] text-amber-700/80 mt-1">
             Arquivo: <code className="bg-amber-100/80 px-1">supabase-fix-precificacao.sql</code> no projeto → Supabase Dashboard → SQL → Run
           </p>
         </div>
       )}
-      <div ref={searchDropRef} className="relative max-w-md shrink-0">
-        <label className="font-sans text-[9px] tracking-widest uppercase text-muted block mb-1.5">Buscar peça</label>
-        <div className="relative">
-          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted/50 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-          <input
-            type="search"
-            value={searchQuery}
-            onChange={(e) => { setSearchQuery(e.target.value); setSearchOpen(true) }}
-            onFocus={() => { if (searchQuery.trim()) setSearchOpen(true) }}
-            placeholder="Código ou nome da peça…"
-            className="w-full border border-pedra pl-9 pr-8 py-2.5 font-sans text-sm text-carvao placeholder:text-muted/40 focus:outline-none focus:border-terracota bg-white"
-          />
-          {searchQuery && (
-            <button type="button" onClick={() => { setSearchQuery(''); setSearchOpen(false) }}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-carvao text-lg leading-none w-6 h-6 flex items-center justify-center">×</button>
-          )}
-        </div>
+
+      <div className="shrink-0 flex flex-wrap items-center gap-x-2 gap-y-1.5">
+        <div ref={searchDropRef} className="relative flex-1 min-w-[12rem] max-w-sm">
+          <div className="relative">
+            <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted/50 pointer-events-none" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(e) => { setSearchQuery(e.target.value); setSearchOpen(true) }}
+              onFocus={() => { if (searchQuery.trim()) setSearchOpen(true) }}
+              placeholder="Buscar peça — código ou nome…"
+              aria-label="Buscar peça"
+              className="w-full border border-pedra pl-8 pr-7 py-1.5 font-sans text-xs text-carvao placeholder:text-muted/40 focus:outline-none focus:border-terracota bg-white"
+            />
+            {searchQuery && (
+              <button type="button" onClick={() => { setSearchQuery(''); setSearchOpen(false) }}
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted hover:text-carvao text-base leading-none w-5 h-5 flex items-center justify-center">×</button>
+            )}
+          </div>
         {searchOpen && searchQuery.trim() && (
           <div className="absolute z-50 top-full mt-1 left-0 right-0 bg-white border border-pedra shadow-lg max-h-[280px] overflow-y-auto">
             {searchResults.length === 0 ? (
@@ -4327,79 +4626,75 @@ export function PecasTable({
             )}
           </div>
         )}
+        </div>
+
+        {pdfError && <p className="font-sans text-[11px] text-red-600 shrink-0">{pdfError}</p>}
+        <button type="button" onClick={openPdfModal} disabled={totalSelectedCount === 0}
+          className="font-sans text-xs bg-carvao text-cru px-3 py-1 hover:bg-carvao/85 transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0 ml-auto">
+          Gerar PDF
+        </button>
       </div>
 
       {destaqueLimitMsg && (
-        <div className="shrink-0 mb-0 px-4 py-3 bg-amber-50 border border-amber-200 flex items-start justify-between gap-4">
-          <p className="font-sans text-sm text-amber-900">{destaqueLimitMsg}</p>
+        <div className="shrink-0 px-3 py-2 bg-amber-50 border border-amber-200 flex items-start justify-between gap-3">
+          <p className="font-sans text-xs text-amber-900">{destaqueLimitMsg}</p>
           <button type="button" onClick={() => setDestaqueLimitMsg(null)} className="text-amber-700 hover:text-amber-900 text-lg leading-none shrink-0">×</button>
         </div>
       )}
 
-      <div className="shrink-0 flex flex-wrap items-center justify-between gap-3 py-1">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={selectAllVisible}
-              className="font-sans text-xs text-carvao border border-pedra px-3 py-1.5 hover:bg-areia/50 transition-colors">
-              Selecionar todos
-            </button>
-            <button type="button" onClick={clearSelection}
-              className="font-sans text-xs text-muted border border-pedra px-3 py-1.5 hover:bg-areia/50 transition-colors">
-              Limpar seleção
-            </button>
-            <button
-              type="button"
-              onClick={() => { setFormConjuntoError(null); setFormConjuntoModal({ rowIds: selectedAvulsaRowIds }) }}
-              disabled={selectedAvulsaRowIds.length < 2}
-              title={selectedAvulsaRowIds.length < 2 ? 'Selecione ao menos 2 peças avulsas' : undefined}
-              className="font-sans text-xs text-terracota border border-terracota/50 px-3 py-1.5 hover:bg-terracota/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              Formar conjunto ({selectedAvulsaRowIds.length})
-            </button>
-            <button
-              type="button"
-              onClick={() => setConfirmBulkDelete(true)}
-              disabled={!canBulkDelete || bulkDeleting}
-              title={!canBulkDelete ? 'Selecione peças ou conjuntos para excluir' : undefined}
-              className="font-sans text-xs text-red-600 border border-red-200 px-3 py-1.5 hover:bg-red-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              Excluir selecionados ({bulkDeletionPlan.pecaCount})
-            </button>
-            <div className="flex flex-wrap items-center gap-3 border border-pedra/60 px-3 py-1.5 bg-cru/20">
-              <span className="font-sans text-[9px] tracking-widest uppercase text-muted shrink-0">Seleção</span>
-              <label className="flex items-center gap-1.5 font-sans text-xs text-carvao cursor-pointer select-none">
-                <input
-                  type="radio"
-                  name="pdf-selection-mode"
-                  checked={pdfSelectionMode === 'all'}
-                  onChange={() => setPdfSelectionMode('all')}
-                  className="accent-carvao"
-                />
-                Todas as peças
-              </label>
-              <label className="flex items-center gap-1.5 font-sans text-xs text-carvao cursor-pointer select-none">
-                <input
-                  type="radio"
-                  name="pdf-selection-mode"
-                  checked={pdfSelectionMode === 'feira'}
-                  onChange={() => setPdfSelectionMode('feira')}
-                  className="accent-carvao"
-                />
-                Apenas feira
-              </label>
-            </div>
-            <span className="font-sans text-xs text-muted">
-              {selectedPdfCount} de {selectableKeysForMode.length} selecionado(s)
-            </span>
-          </div>
+      <div className="shrink-0 flex flex-wrap items-center gap-1.5">
+        <button type="button" onClick={selectAllVisible}
+          className="font-sans text-[11px] text-carvao border border-pedra px-2 py-1 hover:bg-areia/50 transition-colors">
+          Selecionar todos
+        </button>
+        <button type="button" onClick={clearSelection}
+          className="font-sans text-[11px] text-muted border border-pedra px-2 py-1 hover:bg-areia/50 transition-colors">
+          Limpar seleção
+        </button>
+        <button
+          type="button"
+          onClick={() => { setFormConjuntoError(null); setFormConjuntoModal({ rowIds: selectedAvulsaRowIds }) }}
+          disabled={selectedAvulsaRowIds.length < 2}
+          title={selectedAvulsaRowIds.length < 2 ? 'Selecione ao menos 2 peças avulsas' : undefined}
+          className="font-sans text-[11px] text-terracota border border-terracota/50 px-2 py-1 hover:bg-terracota/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          Formar conjunto ({selectedAvulsaRowIds.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setConfirmBulkDelete(true)}
+          disabled={!canBulkDelete || bulkDeleting}
+          title={!canBulkDelete ? 'Selecione peças ou conjuntos para excluir' : undefined}
+          className="font-sans text-[11px] text-red-600 border border-red-200 px-2 py-1 hover:bg-red-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          Excluir selecionados ({bulkDeletionPlan.pecaCount})
+        </button>
+        <div className="flex flex-wrap items-center gap-2 border border-pedra/60 px-2 py-1 bg-cru/20">
+          <span className="font-sans text-[8px] tracking-widest uppercase text-muted shrink-0">Seleção</span>
+          <label className="flex items-center gap-1 font-sans text-[11px] text-carvao cursor-pointer select-none">
+            <input
+              type="radio"
+              name="pdf-selection-mode"
+              checked={pdfSelectionMode === 'all'}
+              onChange={() => setPdfSelectionMode('all')}
+              className="accent-carvao"
+            />
+            Todas as peças
+          </label>
+          <label className="flex items-center gap-1 font-sans text-[11px] text-carvao cursor-pointer select-none">
+            <input
+              type="radio"
+              name="pdf-selection-mode"
+              checked={pdfSelectionMode === 'feira'}
+              onChange={() => setPdfSelectionMode('feira')}
+              className="accent-carvao"
+            />
+            Apenas feira
+          </label>
         </div>
-        <div className="flex items-center gap-3">
-          {pdfError && <p className="font-sans text-xs text-red-600">{pdfError}</p>}
-          <button type="button" onClick={openPdfModal} disabled={totalSelectedCount === 0}
-            className="font-sans text-xs bg-carvao text-cru px-4 py-2 hover:bg-carvao/85 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-            Gerar PDF
-          </button>
-        </div>
+        <span className="font-sans text-[11px] text-muted">
+          {selectedPdfCount} de {selectableKeysForMode.length} selecionado(s)
+        </span>
       </div>
 
       <div className="flex-1 min-h-0 border border-pedra bg-white overflow-auto">
@@ -4585,20 +4880,25 @@ export function PecasTable({
 
                     {/* Actions */}
                     <td className="px-1 py-2 text-center">
-                      <div className="flex flex-col items-center gap-1.5">
+                      <div className={TABLE_ACTION_STACK}>
                         <button type="button" onClick={() => openConjuntoEditModal(item.conjuntoId)}
-                          className="font-sans text-[10px] text-terracota hover:text-carvao border border-terracota/40 px-2 py-0.5 hover:bg-areia/60 transition-colors whitespace-nowrap">
+                          className={TABLE_ACTION_EDIT}>
                           Editar
                         </button>
-                        <button type="button" onClick={() => duplicateConjunto(item.conjuntoId)}
-                          className="font-sans text-[10px] text-muted hover:text-carvao border border-pedra px-2 py-0.5 hover:bg-areia/60 transition-colors whitespace-nowrap">
+                        <button type="button" onClick={() => openDuplicateConjunto(item.conjuntoId)}
+                          className={TABLE_ACTION_DUP}>
                           Duplicar
+                        </button>
+                        <button type="button" onClick={() => openDeleteConjuntoConfirm(item.conjuntoId)}
+                          className={TABLE_ACTION_DEL}>
+                          Remover
                         </button>
                         <button type="button" onClick={() => openAddPecaForm(item.conjuntoId)}
                           title="Adicionar peça a este conjunto"
-                          className="font-sans text-[9px] text-terracota hover:text-carvao flex items-center gap-0.5 whitespace-nowrap">
-                          <span className="text-base leading-none font-light">+</span> Peça
-                          <span className="text-muted/50 ml-0.5">({item.rows.length})</span>
+                          className={TABLE_ACTION_ADD}>
+                          <span className="text-sm leading-none font-light">+</span>
+                          <span>Peça</span>
+                          <span className="text-muted/50">({item.rows.length})</span>
                         </button>
                       </div>
                     </td>
@@ -4782,34 +5082,21 @@ export function PecasTable({
                   {/* Actions */}
                   <td className="px-1 py-2 text-center">
                     {inConjunto ? (
-                      confirmDelete === row.id ? (
-                        <div className="flex flex-col items-center gap-0.5">
-                          <button type="button" onClick={() => handleDelete(row.id)} className="font-sans text-[9px] text-red-500 hover:text-red-700 whitespace-nowrap">Confirmar</button>
-                          <button type="button" onClick={() => setConfirmDelete(null)} className="font-sans text-[9px] text-muted hover:text-carvao">Cancelar</button>
-                        </div>
-                      ) : (
-                        <button type="button" onClick={() => setConfirmDelete(row.id)} title="Remover peça do conjunto"
-                          className="text-muted/40 hover:text-red-500 font-sans text-lg leading-none transition-colors opacity-60 hover:opacity-100">×</button>
-                      )
+                      <span className="font-sans text-[9px] text-muted/40">—</span>
                     ) : (
-                      <div className="flex flex-col items-center gap-1.5">
+                      <div className={TABLE_ACTION_STACK}>
                         <button type="button" onClick={() => openEditModal(row.id)}
-                          className="font-sans text-[10px] text-terracota hover:text-carvao border border-terracota/40 px-2 py-0.5 hover:bg-areia/60 transition-colors whitespace-nowrap">
+                          className={TABLE_ACTION_EDIT}>
                           Editar
                         </button>
-                        <button type="button" onClick={() => duplicatePeca(row.id)}
-                          className="font-sans text-[10px] text-muted hover:text-carvao border border-pedra px-2 py-0.5 hover:bg-areia/60 transition-colors whitespace-nowrap">
+                        <button type="button" onClick={() => openDuplicatePeca(row.id)}
+                          className={TABLE_ACTION_DUP}>
                           Duplicar
                         </button>
-                        {confirmDelete === row.id ? (
-                          <div className="flex flex-col items-center gap-0.5">
-                            <button type="button" onClick={() => handleDelete(row.id)} className="font-sans text-[9px] text-red-500 hover:text-red-700 whitespace-nowrap">Confirmar</button>
-                            <button type="button" onClick={() => setConfirmDelete(null)} className="font-sans text-[9px] text-muted hover:text-carvao">Cancelar</button>
-                          </div>
-                        ) : (
-                          <button type="button" onClick={() => setConfirmDelete(row.id)}
-                            className="text-muted/40 hover:text-red-500 font-sans text-lg leading-none transition-colors opacity-60 hover:opacity-100">×</button>
-                        )}
+                        <button type="button" onClick={() => openDeletePecaConfirm(row)}
+                          className={TABLE_ACTION_DEL}>
+                          Remover
+                        </button>
                       </div>
                     )}
                   </td>
@@ -5103,8 +5390,8 @@ export function PecasTable({
           onSave={handleModalSave}
           onDuplicate={() => {
             if (!editRowModal) return
-            if (editRowModal.conjunto_id) duplicateConjunto(editRowModal.conjunto_id)
-            else duplicatePeca(editRowModal.id)
+            if (editRowModal.conjunto_id) openDuplicateConjunto(editRowModal.conjunto_id)
+            else openDuplicatePeca(editRowModal.id)
           }}
           saving={modalSaving}
           saveError={modalSaveError}
@@ -5124,6 +5411,49 @@ export function PecasTable({
           tintaItems={tintaItems}
           biscoitoItems={biscoitoItems}
           queimaAltaItems={queimaAltaItems}
+        />
+      )}
+
+      {duplicatePecaPrompt && (() => {
+        const source = rows.find((r) => r.id === duplicatePecaPrompt.rowId)
+        if (!source) return null
+        return (
+          <DuplicatePecaModal
+            codigo={source.codigo}
+            nome={source.nome}
+            onConfirm={(mode) => duplicatePeca(duplicatePecaPrompt.rowId, mode)}
+            onCancel={() => setDuplicatePecaPrompt(null)}
+          />
+        )
+      })()}
+
+      {duplicateConjuntoPrompt && (() => {
+        const pieces = getConjuntoPiecesFromRows(rows, duplicateConjuntoPrompt.conjuntoId)
+        const ref = pieces[0]
+        if (!ref) return null
+        return (
+          <DuplicatePecaModal
+            kind="conjunto"
+            codigo={ref.conjunto_codigo}
+            nome={ref.conjunto_nome}
+            detail={`${pieces.length} ${pieces.length === 1 ? 'peça será copiada' : 'peças serão copiadas'}`}
+            onConfirm={(mode) => duplicateConjunto(duplicateConjuntoPrompt.conjuntoId, mode)}
+            onCancel={() => setDuplicateConjuntoPrompt(null)}
+          />
+        )
+      })()}
+
+      {deleteConfirm && (
+        <ConfirmDeleteModal
+          title={deleteConfirm.type === 'conjunto' ? 'Excluir conjunto' : 'Excluir peça'}
+          message={
+            deleteConfirm.type === 'conjunto'
+              ? `Deseja excluir o conjunto ${[deleteConfirm.codigo, deleteConfirm.nome].filter(Boolean).join(' — ') || 'selecionado'}? Todas as peças vinculadas serão removidas permanentemente.`
+              : `Deseja excluir a peça ${[deleteConfirm.codigo, deleteConfirm.nome].filter(Boolean).join(' — ') || 'selecionada'}? Esta ação não pode ser desfeita.`
+          }
+          deleting={deleteInProgress}
+          onConfirm={() => void executeDeleteConfirm()}
+          onCancel={() => !deleteInProgress && setDeleteConfirm(null)}
         />
       )}
     </div>

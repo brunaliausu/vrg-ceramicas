@@ -61,15 +61,23 @@ ON CONFLICT (id) DO NOTHING;
 ALTER TABLE conjuntos ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "conjuntos_public_read" ON conjuntos;
+CREATE POLICY "conjuntos_admin_all"
+  ON conjuntos FOR ALL
+  TO authenticated
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
+
 CREATE POLICY "conjuntos_public_read"
   ON conjuntos FOR SELECT
-  USING (true);
+  TO anon, authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.produtos p
+      WHERE p.id = conjuntos.id AND p.status != 'Rascunho'
+    )
+  );
 
 DROP POLICY IF EXISTS "conjuntos_admin_write" ON conjuntos;
-CREATE POLICY "conjuntos_admin_write"
-  ON conjuntos FOR ALL
-  USING (auth.role() = 'authenticated')
-  WITH CHECK (auth.role() = 'authenticated');
 
 -- Recarrega o cache de schema do PostgREST (Supabase API)
 NOTIFY pgrst, 'reload schema';

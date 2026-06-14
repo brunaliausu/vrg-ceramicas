@@ -17,8 +17,8 @@ ON CONFLICT (id) DO NOTHING;
 -- Row Level Security
 ALTER TABLE custos_config ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Leitura pública"
-  ON custos_config FOR SELECT USING (true);
-
-CREATE POLICY "Escrita autenticada"
-  ON custos_config FOR ALL USING (auth.role() = 'authenticated');
+CREATE POLICY "custos_config_admin_all"
+  ON custos_config FOR ALL
+  TO authenticated
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());

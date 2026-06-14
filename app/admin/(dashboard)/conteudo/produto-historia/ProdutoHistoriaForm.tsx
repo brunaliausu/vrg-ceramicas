@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
+import { salvarConteudoSite } from '../actions'
 import { ConteudoImageUpload } from '@/components/admin/ConteudoImageUpload'
 import type { ProdutoHistoriaConteudo } from '@/types'
 
@@ -32,13 +32,10 @@ export function ProdutoHistoriaForm({ inicial }: Props) {
     setSucesso('')
     setErro('')
 
-    const supabase = createClient()
-    const { error } = await supabase
-      .from('conteudo_site')
-      .upsert({ id: 'produto_historia', dados: form, atualizado_em: new Date().toISOString() })
+    const result = await salvarConteudoSite('produto_historia', form)
 
-    if (error) {
-      setErro('Erro ao salvar. Tente novamente.')
+    if (!result.ok) {
+      setErro(result.error === 'Não autorizado' ? 'Sem permissão para salvar.' : 'Erro ao salvar. Tente novamente.')
     } else {
       setSucesso('Seção "A história desta peça" salva com sucesso!')
       router.refresh()

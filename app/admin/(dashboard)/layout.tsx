@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
+import { isAdminUser } from '@/lib/auth/admin'
 import { LogoutButton } from './LogoutButton'
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -8,6 +9,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const { data: { user } } = await supabase.auth.getUser()
 
   if (!user) redirect('/admin/login')
+  if (!isAdminUser(user)) redirect('/admin/login?error=nao_autorizado')
 
   return (
     <div className="min-h-screen bg-[#FAFAF8]">

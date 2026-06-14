@@ -37,11 +37,19 @@ CREATE TRIGGER pecas_estoque_atualizado_em
 -- Row Level Security
 ALTER TABLE pecas_estoque ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "pecas_estoque_public_read"
-  ON pecas_estoque FOR SELECT
-  USING (true);
-
-CREATE POLICY "pecas_estoque_admin_write"
+CREATE POLICY "pecas_estoque_admin_all"
   ON pecas_estoque FOR ALL
-  USING (auth.role() = 'authenticated')
-  WITH CHECK (auth.role() = 'authenticated');
+  TO authenticated
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
+
+CREATE POLICY "pecas_estoque_conjunto_public_read"
+  ON pecas_estoque FOR SELECT
+  TO anon, authenticated
+  USING (
+    conjunto_id IS NOT NULL
+    AND EXISTS (
+      SELECT 1 FROM public.produtos p
+      WHERE p.id = conjunto_id AND p.status != 'Rascunho'
+    )
+  );

@@ -23,14 +23,25 @@ export function ConteudoImageUpload({ value, onChange, label, hint }: Props) {
     const file = e.target.files?.[0]
     if (!file) return
 
-    // Pré-visualização imediata
+    const allowed = ['image/jpeg', 'image/png', 'image/webp']
+    if (!allowed.includes(file.type)) {
+      setErro('Use apenas JPEG, PNG ou WebP.')
+      e.target.value = ''
+      return
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setErro('Imagem muito grande (máx. 10 MB).')
+      e.target.value = ''
+      return
+    }
+
     const localUrl = URL.createObjectURL(file)
     setPreview(localUrl)
     setErro('')
     setUploading(true)
 
     const supabase = createClient()
-    const ext = file.name.split('.').pop() ?? 'jpg'
+    const ext = file.type === 'image/png' ? 'png' : file.type === 'image/webp' ? 'webp' : 'jpg'
     const path = `conteudo/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
 
     const { data, error } = await supabase.storage

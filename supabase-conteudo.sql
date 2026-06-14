@@ -27,11 +27,22 @@ CREATE POLICY "conteudo_site_public_read"
   ON conteudo_site FOR SELECT
   USING (true);
 
--- Escrita apenas para usuários autenticados (admin)
-CREATE POLICY "conteudo_site_admin_write"
-  ON conteudo_site FOR ALL
-  USING (auth.role() = 'authenticated')
-  WITH CHECK (auth.role() = 'authenticated');
+-- Escrita apenas para admin
+CREATE POLICY "conteudo_site_admin_insert"
+  ON conteudo_site FOR INSERT
+  TO authenticated
+  WITH CHECK (public.is_admin());
+
+CREATE POLICY "conteudo_site_admin_update"
+  ON conteudo_site FOR UPDATE
+  TO authenticated
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
+
+CREATE POLICY "conteudo_site_admin_delete"
+  ON conteudo_site FOR DELETE
+  TO authenticated
+  USING (public.is_admin());
 
 -- ============================================================
 -- Bucket para imagens do conteúdo do site

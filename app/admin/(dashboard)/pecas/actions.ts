@@ -3,6 +3,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { normalizeCategoriaLoja, categoriaParaTabelaProdutos } from '@/lib/categoriaLoja'
 import { revalidatePath } from 'next/cache'
+import { requireAdminOrNull } from '@/lib/auth/require-admin'
 
 export interface PecaPayload {
   id: string
@@ -300,8 +301,11 @@ async function removerPecasDoConjuntoNaLoja(
 }
 
 export async function salvarPeca(peca: PecaPayload): Promise<ActionResult> {
+  const auth = await requireAdminOrNull()
+  if (!auth) return { ok: false, error: 'Não autorizado' }
+
   try {
-    const supabase = await createClient()
+    const supabase = auth.supabase
 
     const emConjunto = !!peca.conjunto_id
     const destaqueHome = !emConjunto && peca.exibir_no_site && peca.destaque_home
@@ -358,8 +362,11 @@ export async function salvarPeca(peca: PecaPayload): Promise<ActionResult> {
 }
 
 export async function salvarConjunto(conjunto: ConjuntoPayload): Promise<ActionResult> {
+  const auth = await requireAdminOrNull()
+  if (!auth) return { ok: false, error: 'Não autorizado' }
+
   try {
-    const supabase = await createClient()
+    const supabase = auth.supabase
 
     const destaqueHome = conjunto.exibir_no_site && conjunto.destaque_home
 
@@ -413,8 +420,11 @@ export async function salvarConjunto(conjunto: ConjuntoPayload): Promise<ActionR
 }
 
 export async function deletarPeca(id: string): Promise<ActionResult> {
+  const auth = await requireAdminOrNull()
+  if (!auth) return { ok: false, error: 'Não autorizado' }
+
   try {
-    const supabase = await createClient()
+    const supabase = auth.supabase
     await supabase.from('produtos').delete().eq('id', id)
     const { error } = await supabase
       .from('pecas_estoque')
@@ -430,8 +440,11 @@ export async function deletarPeca(id: string): Promise<ActionResult> {
 }
 
 export async function deletarConjunto(id: string): Promise<ActionResult> {
+  const auth = await requireAdminOrNull()
+  if (!auth) return { ok: false, error: 'Não autorizado' }
+
   try {
-    const supabase = await createClient()
+    const supabase = auth.supabase
     await supabase.from('produtos').delete().eq('id', id)
     const { error } = await supabase
       .from('conjuntos')

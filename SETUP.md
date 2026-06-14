@@ -19,10 +19,23 @@
 2. Clique em **Add user → Create new user**.
 3. Informe o e-mail e senha da administradora.
 4. Clique em **Create User**.
+5. No SQL Editor, marque o usuário como admin (substitua o e-mail):
+
+```sql
+UPDATE auth.users
+SET raw_app_meta_data = COALESCE(raw_app_meta_data, '{}'::jsonb) || '{"role":"admin"}'::jsonb
+WHERE email = 'seu-email@exemplo.com';
+```
+
+6. Em **Authentication → Providers**, **desabilite Sign up** (cadastro público). Só usuários criados manualmente devem existir.
 
 > Este é o login que a administradora vai usar em `/admin/login`.
 
-### 1.4 Obter as credenciais
+### 1.4 Endurecer segurança (RLS)
+1. No **SQL Editor**, execute o arquivo `supabase-security.sql`.
+2. Isso restringe custos, vendas e escrita admin-only no banco.
+
+### 1.5 Obter as credenciais
 1. No Supabase, vá em **Settings → API**.
 2. Copie:
    - **Project URL** (ex: `https://abcdefgh.supabase.co`)
@@ -68,7 +81,9 @@ Recomendamos a **Vercel** — é gratuita e feita para Next.js.
 | O que fazer | Onde |
 |---|---|
 | Criar banco de dados | Supabase → SQL Editor |
-| Criar login da admin | Supabase → Authentication → Users |
+| Criar login admin + `role: admin` | Authentication → Users + SQL §1.3 |
+| Endurecer RLS | SQL Editor → `supabase-security.sql` |
+| Desabilitar cadastro público | Authentication → Providers |
 | Pegar URL e chave | Supabase → Settings → API |
 | Configurar variáveis | Arquivo `.env.local` |
 | Rodar local | Terminal: `npm run dev` |

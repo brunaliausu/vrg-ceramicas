@@ -178,11 +178,13 @@ export default async function PecasPage() {
 
   return (
     <div className="flex flex-col h-[calc(100vh-5.5rem)] overflow-hidden pb-[4.5rem]">
-      <div className="shrink-0 mb-6">
-        <h1 className="font-serif text-3xl font-light text-carvao">Peças & Estoque</h1>
-        <p className="font-sans text-xs text-muted mt-1">
-          Cadastre e gerencie as peças. Os campos de custo são calculados automaticamente com base nas tabelas de custos.
-        </p>
+      <div className="shrink-0 mb-2">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+          <h1 className="font-serif text-2xl font-light text-carvao leading-tight">Peças & Estoque</h1>
+          <p className="font-sans text-[11px] text-muted leading-snug">
+            Cadastre e gerencie as peças. Custos calculados automaticamente.
+          </p>
+        </div>
       </div>
 
       <div className="flex-1 min-h-0 flex flex-col">

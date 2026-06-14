@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
+import { atualizarMostrarVendidos } from './configuracoes/actions'
 
 interface Props {
   ativo: boolean
@@ -15,11 +15,13 @@ export function MostrarVendidosToggle({ ativo }: Props) {
 
   async function toggle() {
     setSalvando(true)
-    const supabase = createClient()
-    await supabase.from('configuracoes').update({ mostrar_vendidos: !valor }).eq('id', 1)
-    setValor(!valor)
+    const novoValor = !valor
+    const result = await atualizarMostrarVendidos(novoValor)
+    if (result.ok) {
+      setValor(novoValor)
+      router.refresh()
+    }
     setSalvando(false)
-    router.refresh()
   }
 
   return (

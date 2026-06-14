@@ -59,6 +59,19 @@ create trigger update_produtos_updated_at
 -- Segurança por linha (RLS)
 -- ============================================================
 
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT COALESCE(
+    (auth.jwt() -> 'app_metadata' ->> 'role') = 'admin',
+    false
+  );
+$$;
+
 alter table public.produtos enable row level security;
 alter table public.configuracoes enable row level security;
 
@@ -68,19 +81,22 @@ create policy "Produtos visíveis ao público" on public.produtos
   using (status != 'Rascunho');
 
 -- Produtos: admin tem acesso total
-create policy "Admin acesso total" on public.produtos
+create policy "produtos_admin_all" on public.produtos
   for all
-  using (auth.role() = 'authenticated')
-  with check (auth.role() = 'authenticated');
+  to authenticated
+  using (public.is_admin())
+  with check (public.is_admin());
 
 -- Configurações: público pode ler
 create policy "Configurações públicas" on public.configuracoes
   for select using (true);
 
 -- Configurações: admin pode editar
-create policy "Admin edita configurações" on public.configuracoes
+create policy "configuracoes_admin_update" on public.configuracoes
   for update
-  using (auth.role() = 'authenticated');
+  to authenticated
+  using (public.is_admin())
+  with check (public.is_admin());
 
 -- ============================================================
 -- Storage para imagens dos produtos
@@ -98,14 +114,17 @@ values (
 create policy "Imagens públicas" on storage.objects
   for select using (bucket_id = 'produtos');
 
-create policy "Admin faz upload" on storage.objects
+create policy "storage_produtos_admin_insert" on storage.objects
   for insert
-  with check (auth.role() = 'authenticated' and bucket_id = 'produtos');
+  to authenticated
+  with check (public.is_admin() and bucket_id = 'produtos');
 
-create policy "Admin atualiza imagens" on storage.objects
+create policy "storage_produtos_admin_update" on storage.objects
   for update
-  using (auth.role() = 'authenticated' and bucket_id = 'produtos');
+  to authenticated
+  using (public.is_admin() and bucket_id = 'produtos');
 
-create policy "Admin deleta imagens" on storage.objects
+create policy "storage_produtos_admin_delete" on storage.objects
   for delete
-  using (auth.role() = 'authenticated' and bucket_id = 'produtos');
+  to authenticated
+  using (public.is_admin() and bucket_id = 'produtos');

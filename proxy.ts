@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { isAdminUser } from '@/lib/auth/admin'
 
 export async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
@@ -20,19 +21,24 @@ export async function proxy(request: NextRequest) {
           )
         },
       },
-    }
+    },
   )
 
   const { data: { user } } = await supabase.auth.getUser()
   const path = request.nextUrl.pathname
 
-  if (path.startsWith('/admin') && path !== '/admin/login' && !user) {
-    const url = request.nextUrl.clone()
-    url.pathname = '/admin/login'
-    return NextResponse.redirect(url)
+  if (path.startsWith('/admin') && path !== '/admin/login') {
+    if (!user || !isAdminUser(user)) {
+      const url = request.nextUrl.clone()
+      url.pathname = '/admin/login'
+      if (user && !isAdminUser(user)) {
+        url.searchParams.set('error', 'nao_autorizado')
+      }
+      return NextResponse.redirect(url)
+    }
   }
 
-  if (path === '/admin/login' && user) {
+  if (path === '/admin/login' && user && isAdminUser(user)) {
     const url = request.nextUrl.clone()
     url.pathname = '/admin/pecas'
     return NextResponse.redirect(url)
