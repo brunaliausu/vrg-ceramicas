@@ -36,22 +36,24 @@ export interface PecasPdfRow {
   imageSrc: string | null
 }
 
-const COLUMN_WIDTHS: Partial<Record<PdfColumnId, number>> = {
-  codigo: 28,
-  nome: 42,
-  status: 26,
-  custo: 22,
-  sugerido: 22,
-  praticado: 22,
-  exibirSite: 18,
-  fenearte: 18,
+/** Peso relativo para distribuir largura das colunas na folha inteira. */
+const COLUMN_WEIGHTS: Record<PdfColumnId, number> = {
+  codigo: 1.1,
+  nome: 2.2,
+  status: 1.2,
+  custo: 1,
+  sugerido: 1,
+  praticado: 1,
+  exibirSite: 0.9,
+  fenearte: 0.7,
 }
 
 const RIGHT_ALIGN: PdfColumnId[] = ['custo', 'sugerido', 'praticado']
 const CENTER_ALIGN: PdfColumnId[] = ['exibirSite', 'fenearte']
 
-const PHOTO_COL_WIDTH = 24
-const PHOTO_HEIGHT = 20
+const MARGIN = { top: 5, right: 4, left: 4, bottom: 4 }
+const PHOTO_WEIGHT = 1.15
+const PHOTO_HEIGHT = 16
 
 async function resolveImageData(src: string | null): Promise<string | null> {
   if (!src) return null
@@ -77,6 +79,19 @@ function imageFormat(dataUrl: string): 'PNG' | 'JPEG' | 'WEBP' {
   return 'JPEG'
 }
 
+function buildColumnWidths(activeColumns: PdfColumnId[], tableWidth: number): number[] {
+  const dataWeight = activeColumns.reduce((sum, id) => sum + (COLUMN_WEIGHTS[id] ?? 1), 0)
+  const totalWeight = PHOTO_WEIGHT + dataWeight
+  const photoWidth = (tableWidth * PHOTO_WEIGHT) / totalWeight
+  const dataTotal = tableWidth - photoWidth
+  const widths = [photoWidth]
+  for (const id of activeColumns) {
+    const w = COLUMN_WEIGHTS[id] ?? 1
+    widths.push((dataTotal * w) / dataWeight)
+  }
+  return widths
+}
+
 export async function generatePecasPdf(rows: PecasPdfRow[], columns: PdfColumnId[]) {
   const activeColumns = columns.length > 0 ? columns : DEFAULT_PDF_COLUMNS
   const dataLabels = activeColumns.map(
@@ -87,57 +102,77 @@ export async function generatePecasPdf(rows: PecasPdfRow[], columns: PdfColumnId
   const imageDataList = await Promise.all(rows.map((r) => resolveImageData(r.imageSrc)))
 
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+  const pageWidth = doc.internal.pageSize.getWidth()
+  const pageHeight = doc.internal.pageSize.getHeight()
+  const tableWidth = pageWidth - MARGIN.left - MARGIN.right
+  const colWidths = buildColumnWidths(activeColumns, tableWidth)
+  const photoColWidth = colWidths[0]
 
-  doc.setFont('helvetica', 'normal')
-  doc.setFontSize(16)
-  doc.text('Peças & Estoque — VRG Cerâmicas', 14, 14)
-
-  doc.setFontSize(9)
-  doc.setTextColor(100)
-  doc.text(`Gerado em ${new Date().toLocaleString('pt-BR')} · ${rows.length} item(ns)`, 14, 20)
-  doc.setTextColor(0)
-
-  const columnStyles: Record<number, { cellWidth?: number; minCellHeight?: number; halign?: 'left' | 'center' | 'right' }> = {
-    0: { cellWidth: PHOTO_COL_WIDTH, minCellHeight: PHOTO_HEIGHT + 4 },
+  const columnStyles: Record<number, { cellWidth: number; minCellHeight?: number; halign?: 'left' | 'center' | 'right' }> = {
+    0: { cellWidth: photoColWidth, minCellHeight: PHOTO_HEIGHT + 2 },
   }
   activeColumns.forEach((id, idx) => {
     const colIdx = idx + 1
-    const style: { cellWidth?: number; halign?: 'left' | 'center' | 'right' } = {}
-    if (COLUMN_WIDTHS[id]) style.cellWidth = COLUMN_WIDTHS[id]
+    const style: { cellWidth: number; halign?: 'left' | 'center' | 'right' } = {
+      cellWidth: colWidths[colIdx],
+    }
     if (RIGHT_ALIGN.includes(id)) style.halign = 'right'
     if (CENTER_ALIGN.includes(id)) style.halign = 'center'
-    if (Object.keys(style).length > 0) columnStyles[colIdx] = style
+    columnStyles[colIdx] = style
   })
 
+  const generatedAt = new Date().toLocaleString('pt-BR')
+
   autoTable(doc, {
-    startY: 26,
+    startY: MARGIN.top,
     head: [labels],
     body: rows.map((r) => ['', ...activeColumns.map((id) => r[id])]),
+    tableWidth,
     styles: {
-      fontSize: 8,
-      cellPadding: 2.5,
+      fontSize: 7,
+      cellPadding: 1.2,
       overflow: 'linebreak',
+      minCellHeight: PHOTO_HEIGHT + 2,
     },
     headStyles: {
       fillColor: [45, 42, 38],
       textColor: [250, 248, 243],
       fontStyle: 'bold',
+      fontSize: 7,
+      cellPadding: 1.4,
     },
     columnStyles,
-    margin: { left: 14, right: 14 },
+    margin: MARGIN,
+    showHead: 'everyPage',
+    rowPageBreak: 'auto',
+    didDrawPage: (data) => {
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(6)
+      doc.setTextColor(120)
+      doc.text(
+        `VRG Cerâmicas · Peças & Estoque · ${rows.length} item(ns) · ${generatedAt}`,
+        MARGIN.left,
+        pageHeight - 2,
+      )
+      if (data.pageNumber > 1) {
+        doc.text(String(data.pageNumber), pageWidth - MARGIN.right, pageHeight - 2, { align: 'right' })
+      }
+      doc.setTextColor(0)
+    },
     didDrawCell: (data) => {
       if (data.section !== 'body' || data.column.index !== 0 || data.row.index < 0) return
       const img = imageDataList[data.row.index]
       if (!img) return
       try {
         const format = imageFormat(img)
-        const pad = 2
+        const pad = 1
+        const imgW = photoColWidth - pad * 2
         doc.addImage(
           img,
           format,
           data.cell.x + pad,
           data.cell.y + pad,
-          PHOTO_COL_WIDTH - pad * 2,
+          imgW,
           PHOTO_HEIGHT,
         )
       } catch {

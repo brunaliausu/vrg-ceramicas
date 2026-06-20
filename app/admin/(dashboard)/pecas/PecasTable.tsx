@@ -2974,7 +2974,11 @@ export function PecasTable({
   // ── Peça mutations ─────────────────────────────────────────────────────────
 
   function buildCodigoLists(excludePecaId?: string, excludeConjuntoId?: string): CodigoListEntry {
-    const pecaCodigos = rows.map((r) => ({ id: r.id, codigo: r.codigo }))
+    const pecaCodigos = rows.map((r) => ({
+      id: r.id,
+      codigo: r.codigo,
+      conjuntoId: r.conjunto_id,
+    }))
     const conjuntoIds = new Set<string>()
     rows.forEach((r) => { if (r.conjunto_id) conjuntoIds.add(r.conjunto_id) })
     const conjuntoCodigos = [...conjuntoIds].map((conjuntoId) => {
@@ -3077,6 +3081,7 @@ export function PecasTable({
     }
     const result = validatePecaCodigoUnique(row.codigo, buildCodigoLists(rowId), rowId, {
       strictFormat: row.isNew,
+      inConjunto: !!row.conjunto_id,
     })
     if (!result.ok) {
       setCodigoError(`peca:${rowId}`, result.error)
@@ -3096,7 +3101,11 @@ export function PecasTable({
     scope?: { pecaIds?: string[]; conjuntoIds?: string[] },
     rowsSource: PecaRow[] = rows,
   ): string | null {
-    const pecaCodigos = rowsSource.map((r) => ({ id: r.id, codigo: r.codigo }))
+    const pecaCodigos = rowsSource.map((r) => ({
+      id: r.id,
+      codigo: r.codigo,
+      conjuntoId: r.conjunto_id,
+    }))
     const conjuntoIds = new Set<string>()
     rowsSource.forEach((r) => { if (r.conjunto_id) conjuntoIds.add(r.conjunto_id) })
     const conjuntoCodigos = [...conjuntoIds].map((conjuntoId) => {
@@ -3111,7 +3120,10 @@ export function PecasTable({
       : rowsSource
     for (const r of pecaRows) {
       if (!r.codigo.trim()) continue
-      const result = validatePecaCodigoUnique(r.codigo, lists, r.id, { strictFormat: r.isNew })
+      const result = validatePecaCodigoUnique(r.codigo, lists, r.id, {
+        strictFormat: r.isNew,
+        inConjunto: !!r.conjunto_id,
+      })
       if (!result.ok) return result.error
     }
     const scopeConjuntoIds = scope
@@ -3124,7 +3136,7 @@ export function PecasTable({
       const result = validateConjuntoCodigoUnique(codigo, lists, conjuntoId)
       if (!result.ok) return result.error
       const key = normalizeCodigoKey(result.canonical)
-      if (seen.has(key)) return `O código ${result.canonical} já existe.`
+      if (seen.has(key)) return `O código ${result.canonical} já existe em outro conjunto.`
       seen.add(key)
     }
     return null

@@ -225,14 +225,14 @@ export function compareCodigoFamilia(a: string, b: string): number {
 }
 
 export interface CodigoListEntry {
-  pecaCodigos: { id: string; codigo: string }[]
+  pecaCodigos: { id: string; codigo: string; conjuntoId?: string | null }[]
   conjuntoCodigos: { conjuntoId: string; codigo: string }[]
 }
 
-export function isCodigoDuplicated(
+/** Duplicata entre códigos de conjuntos (conjuntos devem ser únicos entre si). */
+export function isConjuntoCodigoDuplicated(
   raw: string,
   lists: CodigoListEntry,
-  excludePecaId?: string,
   excludeConjuntoId?: string,
 ): boolean {
   const key = normalizeCodigoKey(raw)
@@ -243,6 +243,32 @@ export function isCodigoDuplicated(
     if (normalizeCodigoKey(c.codigo) === key) return true
   }
   return false
+}
+
+/** Duplicata entre peças avulsas (sem conjunto). Peças vinculadas a conjunto podem repetir código. */
+export function isAvulsaPecaCodigoDuplicated(
+  raw: string,
+  lists: CodigoListEntry,
+  excludePecaId?: string,
+): boolean {
+  const key = normalizeCodigoKey(raw)
+  if (!key) return false
+
+  for (const p of lists.pecaCodigos) {
+    if (p.id === excludePecaId || !p.codigo.trim() || p.conjuntoId) continue
+    if (normalizeCodigoKey(p.codigo) === key) return true
+  }
+  return false
+}
+
+/** @deprecated Use isConjuntoCodigoDuplicated ou isAvulsaPecaCodigoDuplicated */
+export function isCodigoDuplicated(
+  raw: string,
+  lists: CodigoListEntry,
+  excludePecaId?: string,
+  excludeConjuntoId?: string,
+): boolean {
+  return isConjuntoCodigoDuplicated(raw, lists, excludeConjuntoId)
 }
 
 type ValidateOk = { ok: true; canonical: string }
@@ -266,6 +292,8 @@ export function validatePecaCodigoFormat(raw: string): ValidateOk | ValidateErr 
 export interface ValidatePecaCodigoOptions {
   /** Quando false, aceita códigos legados já cadastrados (ex.: U57A, D52). */
   strictFormat?: boolean
+  /** Peça vinculada a conjunto — permite códigos iguais entre peças do conjunto. */
+  inConjunto?: boolean
 }
 
 export function validatePecaCodigoUnique(
@@ -277,17 +305,22 @@ export function validatePecaCodigoUnique(
   const trimmed = raw.trim()
   if (!trimmed) return { ok: false, error: 'Informe o código da peça.' }
 
+  const checkAvulsaDuplicate = !options?.inConjunto
+
   if (options?.strictFormat) {
     const format = validatePecaCodigoFormat(raw)
     if (!format.ok) return format
-    if (isCodigoDuplicated(format.canonical, lists, excludePecaId)) {
-      return { ok: false, error: `O código ${format.canonical} já existe.` }
+    if (
+      checkAvulsaDuplicate &&
+      isAvulsaPecaCodigoDuplicated(format.canonical, lists, excludePecaId)
+    ) {
+      return { ok: false, error: `O código ${format.canonical} já existe em outra peça avulsa.` }
     }
     return format
   }
 
-  if (isCodigoDuplicated(trimmed, lists, excludePecaId)) {
-    return { ok: false, error: `O código ${trimmed} já existe.` }
+  if (checkAvulsaDuplicate && isAvulsaPecaCodigoDuplicated(trimmed, lists, excludePecaId)) {
+    return { ok: false, error: `O código ${trimmed} já existe em outra peça avulsa.` }
   }
   return { ok: true, canonical: trimmed }
 }
@@ -299,8 +332,8 @@ export function validateConjuntoCodigoUnique(
 ): ValidateOk | ValidateErr {
   const trimmed = raw.trim()
   if (!trimmed) return { ok: false, error: 'Informe o código do conjunto.' }
-  if (isCodigoDuplicated(trimmed, lists, undefined, excludeConjuntoId)) {
-    return { ok: false, error: `O código ${trimmed} já existe.` }
+  if (isConjuntoCodigoDuplicated(trimmed, lists, excludeConjuntoId)) {
+    return { ok: false, error: `O código ${trimmed} já existe em outro conjunto.` }
   }
   return { ok: true, canonical: trimmed }
 }

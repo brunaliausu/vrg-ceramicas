@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "cartao-visita": "node scripts/generate-cartao-visita.mjs",
+    "cartao-visita:b": "node scripts/generate-cartao-visita-b.mjs",
+    "cartao-visita:c": "node scripts/generate-cartao-visita-c.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",

@@ -23,6 +23,8 @@
 # misc
 .DS_Store
 *.pem
+/output/
+scripts/cartao-visita/fonts/
 
 # debug
 npm-debug.log*
