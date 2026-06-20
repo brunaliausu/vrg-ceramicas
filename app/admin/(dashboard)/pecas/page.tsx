@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { PecasTable } from './PecasTable'
+import type { ConjuntoPecaLink } from './conjuntoLinks'
 
 export interface CustoItem { nome: string; valor: number }
 
@@ -157,10 +158,24 @@ async function getCustos() {
   }
 }
 
+async function getConjuntoLinks(): Promise<ConjuntoPecaLink[]> {
+  try {
+    const supabase = await createClient()
+    const { data } = await supabase
+      .from('conjunto_pecas')
+      .select('conjunto_id, peca_id, ordem')
+    return (data ?? []) as ConjuntoPecaLink[]
+  } catch {
+    return []
+  }
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default async function PecasPage() {
-  const [pecas, custos, conjuntos] = await Promise.all([getPecas(), getCustos(), getConjuntos()])
+  const [pecas, custos, conjuntos, conjuntoLinks] = await Promise.all([
+    getPecas(), getCustos(), getConjuntos(), getConjuntoLinks(),
+  ])
 
   const custoHoraFixo =
     calcCustoHora(custos, 'custo_fixo') || DEFAULT_CUSTO_FIXO_TOTAL / 160
@@ -191,6 +206,7 @@ export default async function PecasPage() {
       <PecasTable
         pecasIniciais={pecas}
         conjuntosIniciais={conjuntos}
+        conjuntoLinksIniciais={conjuntoLinks}
         custoHoraFixo={custoHoraFixo}
         custoHoraMO={custoHoraMO}
         embalagemItems={embalagemItems}

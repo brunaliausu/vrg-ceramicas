@@ -50,6 +50,25 @@ async function getConjunto(produtoId: string): Promise<ConjuntoSite | null> {
 async function getConjuntoPieces(conjuntoId: string) {
   try {
     const supabase = await createClient()
+
+    const { data: links } = await supabase
+      .from('conjunto_pecas')
+      .select('peca_id, ordem')
+      .eq('conjunto_id', conjuntoId)
+      .order('ordem', { ascending: true })
+
+    if (links && links.length > 0) {
+      const ids = links.map((l) => l.peca_id)
+      const { data: pecas } = await supabase
+        .from('pecas_estoque')
+        .select('id, codigo, nome, dimensoes, fotos, status, preco_venda')
+        .in('id', ids)
+      const orderMap = new Map(links.map((l) => [l.peca_id, l.ordem]))
+      return (pecas ?? []).sort(
+        (a, b) => (orderMap.get(a.id) ?? 0) - (orderMap.get(b.id) ?? 0),
+      )
+    }
+
     const { data } = await supabase
       .from('pecas_estoque')
       .select('id, codigo, nome, dimensoes, fotos, status, preco_venda')

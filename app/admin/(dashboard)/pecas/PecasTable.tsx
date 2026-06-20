@@ -3,7 +3,19 @@
 import { useState, useRef, useMemo, useEffect, type ReactNode } from 'react'
 import NextImage from 'next/image'
 import { createClient } from '@/lib/supabase/client'
-import { salvarPeca, salvarConjunto, deletarPeca, deletarConjunto } from './actions'
+import {
+  type ConjuntoPecaLink,
+  addLink,
+  collectConjuntoIds,
+  getConjuntoMeta,
+  getConjuntoPiecesFromRows,
+  mergeLinksWithRows,
+  pecaHasAnyConjunto,
+  pecaInConjunto,
+  pecaConjuntoIds,
+  removeLink,
+} from './conjuntoLinks'
+import { salvarPeca, salvarConjunto, deletarPeca, deletarConjunto, syncConjuntoPecas } from './actions'
 import type { CustoItem, ConjuntoDB } from './page'
 import { VendaModal, type VendaFormData } from './VendaModal'
 import { generatePecasPdf, type PecasPdfRow, type PdfColumnId } from './generatePecasPdf'
@@ -318,6 +330,7 @@ interface ConjuntoInfo { id: string; codigo: string; nome: string }
 interface Props {
   pecasIniciais: PecaDB[]
   conjuntosIniciais: ConjuntoDB[]
+  conjuntoLinksIniciais: ConjuntoPecaLink[]
   custoHoraFixo: number
   custoHoraMO: number
   embalagemItems: CustoItem[]
@@ -334,43 +347,50 @@ interface Props {
 
 type DisplayItem =
   | { type: 'conjunto-header'; conjuntoId: string; conjuntoCodigo: string; conjuntoNome: string; rows: PecaRow[] }
-  | { type: 'row'; row: PecaRow }
+  | { type: 'row'; row: PecaRow; displayConjuntoId?: string }
 
-function buildDisplay(rows: PecaRow[]): DisplayItem[] {
+function buildDisplay(
+  rows: PecaRow[],
+  links: ConjuntoPecaLink[],
+  metaById: Map<string, { codigo: string; nome: string }>,
+): DisplayItem[] {
   const items: DisplayItem[] = []
-  const seen = new Set<string>()
+  const conjuntoIds = collectConjuntoIds(rows, links)
 
-  const conjuntoMap = new Map<string, PecaRow[]>()
-  rows.forEach((row) => {
-    if (row.conjunto_id) {
-      if (!conjuntoMap.has(row.conjunto_id)) conjuntoMap.set(row.conjunto_id, [])
-      conjuntoMap.get(row.conjunto_id)!.push(row)
-    }
-  })
-
-  rows.forEach((row) => {
-    if (!row.conjunto_id) {
+  for (const row of rows) {
+    if (!pecaHasAnyConjunto(row.id, row, links)) {
       items.push({ type: 'row', row })
-    } else if (!seen.has(row.conjunto_id)) {
-      seen.add(row.conjunto_id)
-      const groupRows = conjuntoMap.get(row.conjunto_id)!
-      items.push({
-        type: 'conjunto-header',
-        conjuntoId: row.conjunto_id,
-        conjuntoCodigo: row.conjunto_codigo,
-        conjuntoNome: row.conjunto_nome,
-        rows: groupRows,
-      })
-      groupRows.forEach((r) => items.push({ type: 'row', row: r }))
     }
-    // else: já renderizado como parte do grupo
+  }
+
+  const sortedConjuntoIds = conjuntoIds.sort((a, b) => {
+    const ma = metaById.get(a) ?? getConjuntoMeta(a, rows, links)
+    const mb = metaById.get(b) ?? getConjuntoMeta(b, rows, links)
+    return compareCodigoDisplay(ma.codigo || a, mb.codigo || b)
   })
+
+  for (const conjuntoId of sortedConjuntoIds) {
+    const groupRows = getConjuntoPiecesFromRows(rows, conjuntoId, links)
+    if (groupRows.length === 0) continue
+    const meta = metaById.get(conjuntoId) ?? getConjuntoMeta(conjuntoId, rows, links)
+    items.push({
+      type: 'conjunto-header',
+      conjuntoId,
+      conjuntoCodigo: meta.codigo,
+      conjuntoNome: meta.nome,
+      rows: groupRows,
+    })
+    for (const r of groupRows) {
+      items.push({ type: 'row', row: r, displayConjuntoId: conjuntoId })
+    }
+  }
 
   return items
 }
 
 function displayItemKey(item: DisplayItem): string {
-  return item.type === 'conjunto-header' ? `conjunto:${item.conjuntoId}` : `row:${item.row.id}`
+  if (item.type === 'conjunto-header') return `conjunto:${item.conjuntoId}`
+  return item.displayConjuntoId ? `row:${item.row.id}:${item.displayConjuntoId}` : `row:${item.row.id}`
 }
 
 /** Peça avulsa com feira ativa ou linha do conjunto com feira ativa (não inclui peças filhas). */
@@ -379,7 +399,7 @@ function isDisplayItemFenearte(item: DisplayItem, conjuntosData: Map<string, Con
     return conjuntosData.get(item.conjuntoId)?.fenearte ?? false
   }
   const row = item.row
-  if (row.conjunto_id) return false
+  if (item.displayConjuntoId) return false
   return row.fenearte
 }
 
@@ -388,11 +408,11 @@ function isDisplayItemFenearteVisible(item: DisplayItem, conjuntosData: Map<stri
   if (item.type === 'conjunto-header') {
     return conjuntosData.get(item.conjuntoId)?.fenearte ?? false
   }
-  const row = item.row
-  if (row.conjunto_id) {
-    return conjuntosData.get(row.conjunto_id)?.fenearte ?? false
+  const activeConjuntoId = item.displayConjuntoId ?? item.row.conjunto_id
+  if (activeConjuntoId) {
+    return conjuntosData.get(activeConjuntoId)?.fenearte ?? false
   }
-  return row.fenearte
+  return item.row.fenearte
 }
 
 function fmtPrecoPdf(value: number): string {
@@ -420,28 +440,24 @@ function getDisplayItemPhotoSrc(item: DisplayItem, conjuntosData: Map<string, Co
   return row.fotos[0] ?? row.fotosNovas[0]?.preview ?? null
 }
 
-function getConjuntoPiecesFromRows(rows: PecaRow[], conjuntoId: string): PecaRow[] {
-  return rows
-    .filter((r) => r.conjunto_id === conjuntoId)
-    .sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0) || compareCodigoDisplay(a.codigo, b.codigo))
-}
-
-function isConjuntoFullySold(rows: PecaRow[], conjuntoId: string): boolean {
-  const pieces = rows.filter((r) => r.conjunto_id === conjuntoId)
+function isConjuntoFullySold(rows: PecaRow[], conjuntoId: string, links: ConjuntoPecaLink[]): boolean {
+  const pieces = getConjuntoPiecesFromRows(rows, conjuntoId, links)
   return pieces.length > 0 && pieces.every((p) => p.status === 'vendido')
 }
 
 /** Peças vendidas avulsas e conjuntos 100% vendidos ficam no final da lista. */
-function sortRowsForDisplay(rows: PecaRow[]): PecaRow[] {
+function sortRowsForDisplay(rows: PecaRow[], links: ConjuntoPecaLink[]): PecaRow[] {
   const fullySoldConjuntos = new Set<string>()
-  rows.forEach((r) => {
-    if (r.conjunto_id && isConjuntoFullySold(rows, r.conjunto_id)) {
-      fullySoldConjuntos.add(r.conjunto_id)
+  for (const conjuntoId of collectConjuntoIds(rows, links)) {
+    if (isConjuntoFullySold(rows, conjuntoId, links)) {
+      fullySoldConjuntos.add(conjuntoId)
     }
-  })
+  }
 
   function atEnd(row: PecaRow): boolean {
-    if (row.conjunto_id) return fullySoldConjuntos.has(row.conjunto_id)
+    if (pecaHasAnyConjunto(row.id, row, links)) {
+      return pecaConjuntoIds(row.id, row, links).some((cid) => fullySoldConjuntos.has(cid))
+    }
     return row.status === 'vendido'
   }
 
@@ -2069,7 +2085,7 @@ function PecaModalPieceFields({
 }
 
 function PecaDetalhesModal({
-  row, allRows, onClose, onUpdatePiece, onStatusChangePiece, onConjuntoClick,
+  row, allRows, conjuntoLinks, onClose, onUpdatePiece, onStatusChangePiece, onConjuntoClick,
   onOpenPieceFotos, onAddPieceFotos, onPreviewPieceFotos, onAddAnotherPiece, onRemovePiece,
   lockConjunto, conjuntoData,
   onEnableConjunto, onClearConjunto,
@@ -2100,6 +2116,7 @@ function PecaDetalhesModal({
 }: {
   row: PecaRow
   allRows: PecaRow[]
+  conjuntoLinks: ConjuntoPecaLink[]
   onClose: () => void
   onUpdatePiece: (id: string, changes: Partial<PecaRow>) => void
   onStatusChangePiece: (id: string, status: string) => void
@@ -2154,8 +2171,8 @@ function PecaDetalhesModal({
   const isNew = row.isNew
   const inConjunto = !!row.conjunto_id
   const conjuntoPieces = useMemo(
-    () => (row.conjunto_id ? getConjuntoPiecesFromRows(allRows, row.conjunto_id) : [row]),
-    [allRows, row.conjunto_id, row.id],
+    () => (row.conjunto_id ? getConjuntoPiecesFromRows(allRows, row.conjunto_id, conjuntoLinks) : [row]),
+    [allRows, row.conjunto_id, row.id, conjuntoLinks],
   )
   type NovoCadastroTipo = 'avulsa' | 'conjunto'
   const [novoTipo, setNovoTipo] = useState<NovoCadastroTipo | null>(() =>
@@ -2640,11 +2657,15 @@ function PecaDetalhesModal({
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function PecasTable({
-  pecasIniciais, conjuntosIniciais, custoHoraFixo, custoHoraMO,
+  pecasIniciais, conjuntosIniciais, conjuntoLinksIniciais, custoHoraFixo, custoHoraMO,
   embalagemItems, argilaItems, esmalteItems, engobeItems, tintaItems,
   biscoitoItems, queimaAltaItems, margemVendaConfig,
 }: Props) {
   const [rows, setRows] = useState<PecaRow[]>(() => pecasIniciais.map(dbToRow))
+  const [conjuntoLinks, setConjuntoLinks] = useState<ConjuntoPecaLink[]>(() =>
+    mergeLinksWithRows(conjuntoLinksIniciais, pecasIniciais.map(dbToRow)),
+  )
+  const [dirtyConjuntoLinkIds, setDirtyConjuntoLinkIds] = useState<Set<string>>(() => new Set())
 
   // Dados gerenciados ao nível do conjunto
   const [conjuntosData, setConjuntosData] = useState<Map<string, ConjuntoData>>(() => {
@@ -2723,7 +2744,7 @@ export function PecasTable({
 
   // Ensure all conjunto_ids in rows have an entry in conjuntosData
   useEffect(() => {
-    const ids = new Set(rows.map((r) => r.conjunto_id).filter(Boolean) as string[])
+    const ids = new Set(collectConjuntoIds(rows, conjuntoLinks))
     setConjuntosData((prev) => {
       let changed = false
       const next = new Map(prev)
@@ -2732,7 +2753,7 @@ export function PecasTable({
       })
       return changed ? next : prev
     })
-  }, [rows])
+  }, [rows, conjuntoLinks])
 
   // Peças do conjunto sem status — preencher com o status do conjunto
   useEffect(() => {
@@ -2757,23 +2778,39 @@ export function PecasTable({
   }
 
   // Derived list of conjuntos
+  const conjuntoMetaById = useMemo(() => {
+    const m = new Map<string, { codigo: string; nome: string }>()
+    for (const c of conjuntosIniciais) {
+      m.set(c.id, { codigo: c.codigo ?? '', nome: c.nome ?? '' })
+    }
+    for (const r of rows) {
+      if (r.conjunto_id) {
+        m.set(r.conjunto_id, { codigo: r.conjunto_codigo, nome: r.conjunto_nome })
+      }
+    }
+    return m
+  }, [conjuntosIniciais, rows])
+
   const conjuntos = useMemo<ConjuntoInfo[]>(() => {
     const map = new Map<string, ConjuntoInfo>()
-    rows.forEach((row) => {
-      if (row.conjunto_id && !map.has(row.conjunto_id))
-        map.set(row.conjunto_id, { id: row.conjunto_id, codigo: row.conjunto_codigo, nome: row.conjunto_nome })
-    })
+    for (const id of collectConjuntoIds(rows, conjuntoLinks)) {
+      const meta = conjuntoMetaById.get(id) ?? getConjuntoMeta(id, rows, conjuntoLinks)
+      map.set(id, { id, codigo: meta.codigo, nome: meta.nome })
+    }
     return Array.from(map.values())
-  }, [rows])
+  }, [rows, conjuntoLinks, conjuntoMetaById])
 
   const filteredRows = useMemo(() => {
     const hiddenDraftIds = sameCodeDuplicateSession
       ? new Set(sameCodeDuplicateSession.draftPecaIds)
       : null
     const visible = hiddenDraftIds ? rows.filter((r) => !hiddenDraftIds.has(r.id)) : rows
-    return sortRowsForDisplay(filterRowsBySearch(visible, searchQuery))
-  }, [rows, searchQuery, sameCodeDuplicateSession])
-  const displayItems = useMemo(() => buildDisplay(filteredRows), [filteredRows])
+    return sortRowsForDisplay(filterRowsBySearch(visible, searchQuery), conjuntoLinks)
+  }, [rows, searchQuery, sameCodeDuplicateSession, conjuntoLinks])
+  const displayItems = useMemo(
+    () => buildDisplay(filteredRows, conjuntoLinks, conjuntoMetaById),
+    [filteredRows, conjuntoLinks, conjuntoMetaById],
+  )
   const tableDisplayItems = useMemo(() => {
     if (pdfSelectionMode !== 'feira') return displayItems
     return displayItems.filter((item) => isDisplayItemFenearteVisible(item, conjuntosData))
@@ -2810,7 +2847,7 @@ export function PecasTable({
   const selectedAvulsaRowIds = useMemo(() => {
     const ids: string[] = []
     for (const item of displayItems) {
-      if (item.type !== 'row' || item.row.conjunto_id) continue
+      if (item.type !== 'row' || item.displayConjuntoId) continue
       if (selectedKeys.has(displayItemKey(item))) ids.push(item.row.id)
     }
     return ids
@@ -2820,18 +2857,30 @@ export function PecasTable({
     [selectedKeys, displayItems, rows],
   )
   const canBulkDelete = bulkDeletionPlan.pecaCount > 0
-  const avulsasPickerItems = useMemo(
-    () =>
-      rows
-        .filter((r) => !r.conjunto_id)
-        .map((r) => ({
+  const avulsasPickerItems = useMemo(() => {
+    const targetConjuntoId = avulsasPicker?.conjuntoId
+    return rows
+      .filter((r) => {
+        if (!targetConjuntoId) return true
+        return !pecaInConjunto(r.id, targetConjuntoId, r, conjuntoLinks)
+      })
+      .map((r) => {
+        const outrosConjuntos = pecaConjuntoIds(r.id, r, conjuntoLinks).filter(
+          (id) => id !== targetConjuntoId,
+        )
+        const detail =
+          outrosConjuntos.length > 0
+            ? `Também em: ${outrosConjuntos.map((id) => conjuntoMetaById.get(id)?.codigo || id.slice(0, 6)).join(', ')}`
+            : undefined
+        return {
           id: r.id,
           codigo: r.codigo,
           nome: r.nome,
           photoSrc: getRowPhotoSrc(r),
-        })),
-    [rows],
-  )
+          detail,
+        }
+      })
+  }, [rows, conjuntoLinks, avulsasPicker, conjuntoMetaById])
   const searchResults = useMemo(() => buildSearchResults(rows, searchQuery), [rows, searchQuery])
 
   useEffect(() => {
@@ -3018,7 +3067,7 @@ export function PecasTable({
         const fromConjCat = suggestCodigoForCategoria(cdata.categoria, all)
         if (fromConjCat) return fromConjCat
       }
-      const pieces = getConjuntoPiecesFromRows(rows, conjuntoId)
+      const pieces = getConjuntoPiecesFromRows(rows, conjuntoId, conjuntoLinks)
       const prefix = inferPrefixFromCodigos(pieces.map((p) => p.codigo))
       return suggestNextPecaCodigo(prefix, all)
     }
@@ -3342,7 +3391,7 @@ export function PecasTable({
   }
 
   function openDuplicateConjunto(conjuntoId: string) {
-    const pieces = getConjuntoPiecesFromRows(rows, conjuntoId)
+    const pieces = getConjuntoPiecesFromRows(rows, conjuntoId, conjuntoLinks)
     if (pieces.length === 0) return
     setDuplicateConjuntoPrompt({ conjuntoId })
   }
@@ -3430,7 +3479,7 @@ export function PecasTable({
   }
 
   function duplicateConjuntoSameCode(conjuntoId: string) {
-    const pieces = getConjuntoPiecesFromRows(rows, conjuntoId)
+    const pieces = getConjuntoPiecesFromRows(rows, conjuntoId, conjuntoLinks)
     if (pieces.length === 0) return
 
     const ref = pieces[0]
@@ -3489,7 +3538,7 @@ export function PecasTable({
       return
     }
 
-    const pieces = getConjuntoPiecesFromRows(rows, conjuntoId)
+    const pieces = getConjuntoPiecesFromRows(rows, conjuntoId, conjuntoLinks)
     if (pieces.length === 0) return
 
     const ref = pieces[0]
@@ -3747,16 +3796,26 @@ export function PecasTable({
     setRows((prev) => prev.map((r) => {
       const idx = rowIds.indexOf(r.id)
       if (idx === -1) return r
-      return {
-        ...r,
-        conjunto_id: conjuntoId,
-        conjunto_codigo: codigoCheck.canonical,
-        conjunto_nome: nome,
+      const patch: Partial<PecaRow> = {
         ...clearPecaSiteFields(conjuntoStatusForPieces(conjuntoId, '')),
         ordem: idx,
         dirty: true,
       }
+      if (!r.conjunto_id) {
+        patch.conjunto_id = conjuntoId
+        patch.conjunto_codigo = codigoCheck.canonical
+        patch.conjunto_nome = nome
+      }
+      return { ...r, ...patch }
     }))
+    setConjuntoLinks((prev) => {
+      let next = prev
+      rowIds.forEach((pecaId, idx) => {
+        next = addLink(next, conjuntoId, pecaId, idx)
+      })
+      return next
+    })
+    setDirtyConjuntoLinkIds((prev) => new Set(prev).add(conjuntoId))
     setSelectedKeys((prev) => {
       const next = new Set(prev)
       rowIds.forEach((id) => next.delete(`row:${id}`))
@@ -3771,21 +3830,35 @@ export function PecasTable({
 
   function addAvulsasToConjunto(conjuntoId: string, rowIds: string[]) {
     const ref = rows.find((r) => r.conjunto_id === conjuntoId)
+      ?? rows.find((r) => pecaInConjunto(r.id, conjuntoId, r, conjuntoLinks))
     if (!ref || rowIds.length === 0) return
-    const existing = getConjuntoPiecesFromRows(rows, conjuntoId)
+    const meta = conjuntoMetaById.get(conjuntoId) ?? getConjuntoMeta(conjuntoId, rows)
+    const existing = getConjuntoPiecesFromRows(rows, conjuntoId, conjuntoLinks)
     const pieceStatus = conjuntoStatusForPieces(conjuntoId, ref.status)
+
+    setConjuntoLinks((prev) => {
+      let next = prev
+      rowIds.forEach((pecaId, idx) => {
+        if (pecaInConjunto(pecaId, conjuntoId, rows.find((r) => r.id === pecaId)!, prev)) return
+        next = addLink(next, conjuntoId, pecaId, existing.length + idx)
+      })
+      return next
+    })
+    setDirtyConjuntoLinkIds((prev) => new Set(prev).add(conjuntoId))
+
     setRows((prev) => prev.map((r) => {
-      const idx = rowIds.indexOf(r.id)
-      if (idx === -1) return r
-      return {
-        ...r,
-        conjunto_id: conjuntoId,
-        conjunto_codigo: ref.conjunto_codigo,
-        conjunto_nome: ref.conjunto_nome,
+      if (!rowIds.includes(r.id)) return r
+      const patch: Partial<PecaRow> = {
         ...clearPecaSiteFields(pieceStatus),
-        ordem: existing.length + idx,
+        ordem: existing.length + rowIds.indexOf(r.id),
         dirty: true,
       }
+      if (!r.conjunto_id) {
+        patch.conjunto_id = conjuntoId
+        patch.conjunto_codigo = meta.codigo
+        patch.conjunto_nome = meta.nome
+      }
+      return { ...r, ...patch }
     }))
     setAvulsasPicker(null)
     focusConjuntoPiece(rowIds[0])
@@ -3805,22 +3878,56 @@ export function PecasTable({
       ? { ...r, conjunto_id: conjuntoId, conjunto_codigo: codigoCheck.canonical, conjunto_nome: nome, ...clearPecaSiteFields(pieceStatus), dirty: true }
       : r))
     setConjuntosData((prev) => { const next = new Map(prev); next.set(conjuntoId, { ...defaultConjuntoData(), dirty: true }); return next })
+    setConjuntoLinks((prev) => addLink(prev, conjuntoId, rowId, 0))
+    setDirtyConjuntoLinkIds((prev) => new Set(prev).add(conjuntoId))
     setSaveStatus('idle')
     return null
   }
 
   function joinConjunto(rowId: string, conjuntoId: string) {
     const ref = rows.find((r) => r.conjunto_id === conjuntoId)
+      ?? rows.find((r) => pecaInConjunto(r.id, conjuntoId, r, conjuntoLinks))
     if (!ref) return
+    const meta = conjuntoMetaById.get(conjuntoId) ?? getConjuntoMeta(conjuntoId, rows)
     const pieceStatus = conjuntoStatusForPieces(conjuntoId, ref.status)
-    setRows((prev) => prev.map((r) => r.id === rowId
-      ? { ...r, conjunto_id: conjuntoId, conjunto_codigo: ref.conjunto_codigo, conjunto_nome: ref.conjunto_nome, ...clearPecaSiteFields(pieceStatus), dirty: true }
-      : r))
+    const existing = getConjuntoPiecesFromRows(rows, conjuntoId, conjuntoLinks)
+    setConjuntoLinks((prev) => addLink(prev, conjuntoId, rowId, existing.length))
+    setDirtyConjuntoLinkIds((prev) => new Set(prev).add(conjuntoId))
+    setRows((prev) => prev.map((r) => {
+      if (r.id !== rowId) return r
+      const patch: Partial<PecaRow> = {
+        ...clearPecaSiteFields(pieceStatus),
+        ordem: existing.length,
+        dirty: true,
+      }
+      if (!r.conjunto_id) {
+        patch.conjunto_id = conjuntoId
+        patch.conjunto_codigo = meta.codigo
+        patch.conjunto_nome = meta.nome
+      }
+      return { ...r, ...patch }
+    }))
     setSaveStatus('idle')
   }
 
   function leaveConjunto(rowId: string) {
-    setRows((prev) => prev.map((r) => r.id === rowId ? { ...r, conjunto_id: null, conjunto_codigo: '', conjunto_nome: '', dirty: true } : r))
+    const row = rows.find((r) => r.id === rowId)
+    if (!row?.conjunto_id) return
+    const conjuntoId = row.conjunto_id
+    const outros = pecaConjuntoIds(rowId, row, conjuntoLinks).filter((id) => id !== conjuntoId)
+    setConjuntoLinks((prev) => removeLink(prev, conjuntoId, rowId))
+    setDirtyConjuntoLinkIds((prev) => new Set(prev).add(conjuntoId))
+    if (outros.length > 0) {
+      const nextPrimary = outros[0]
+      const meta = conjuntoMetaById.get(nextPrimary) ?? getConjuntoMeta(nextPrimary, rows)
+      setRows((prev) => prev.map((r) => r.id === rowId
+        ? { ...r, conjunto_id: nextPrimary, conjunto_codigo: meta.codigo, conjunto_nome: meta.nome, dirty: true }
+        : r))
+    } else {
+      setRows((prev) => prev.map((r) => r.id === rowId
+        ? { ...r, conjunto_id: null, conjunto_codigo: '', conjunto_nome: '', dirty: true }
+        : r))
+    }
     setSaveStatus('idle')
   }
 
@@ -3901,6 +4008,8 @@ export function PecasTable({
       next.set(conjuntoId, { ...defaultConjuntoData(), dirty: true })
       return next
     })
+    setConjuntoLinks((prev) => addLink(prev, conjuntoId, rowId, 0))
+    setDirtyConjuntoLinkIds((prev) => new Set(prev).add(conjuntoId))
     setSaveStatus('idle')
   }
 
@@ -3929,7 +4038,7 @@ export function PecasTable({
     const ref = rows.find((r) => r.conjunto_id === conjuntoId)
     if (!ref) return
     const cdata = conjuntosData.get(conjuntoId)
-    const existing = getConjuntoPiecesFromRows(rows, conjuntoId)
+    const existing = getConjuntoPiecesFromRows(rows, conjuntoId, conjuntoLinks)
     const categoria = cdata?.categoria || ref.categoria || ''
     const newRow: PecaRow = {
       ...emptyRow(ref.conjunto_id!, ref.conjunto_codigo, ref.conjunto_nome, conjuntoStatusForPieces(conjuntoId, ref.status)),
@@ -3938,6 +4047,8 @@ export function PecasTable({
       codigo: suggestNewPecaCodigo(conjuntoId, categoria),
     }
     setRows((prev) => [...prev, newRow])
+    setConjuntoLinks((prev) => addLink(prev, conjuntoId, newRow.id, existing.length))
+    setDirtyConjuntoLinkIds((prev) => new Set(prev).add(conjuntoId))
     setEditModalLockedConjunto(true)
     setEditModal(newRow.id)
     focusConjuntoPiece(newRow.id)
@@ -3953,31 +4064,61 @@ export function PecasTable({
     if (!row?.conjunto_id) return
 
     const conjuntoId = row.conjunto_id
-    const count = rows.filter((r) => r.conjunto_id === conjuntoId).length
+    const count = getConjuntoPiecesFromRows(rows, conjuntoId, conjuntoLinks).length
     if (count <= 1) return
 
     if (row.isNew) {
       row.fotosNovas.forEach((f) => URL.revokeObjectURL(f.preview))
+      setConjuntoLinks((prev) => removeLink(prev, conjuntoId, pieceId))
+      setDirtyConjuntoLinkIds((prev) => new Set(prev).add(conjuntoId))
       setRows((prev) => prev.filter((r) => r.id !== pieceId))
       if (editModal === pieceId) {
-        const remaining = rows.filter((r) => r.conjunto_id === conjuntoId && r.id !== pieceId)
+        const remaining = getConjuntoPiecesFromRows(
+          rows.filter((r) => r.id !== pieceId),
+          conjuntoId,
+          removeLink(conjuntoLinks, conjuntoId, pieceId),
+        )
         setEditModal(remaining[0]?.id ?? null)
       }
       setSaveStatus('idle')
       return
     }
 
-    try {
-      const updatedRows = await deletePecaFromDb(pieceId, rows)
-      setRows(updatedRows)
-      setSaveStatus('idle')
-      if (editModal === pieceId) {
-        const remaining = updatedRows.filter((r) => r.conjunto_id === conjuntoId)
-        setEditModal(remaining[0]?.id ?? null)
-        if (remaining.length === 0) closeEditModal()
+    const outros = pecaConjuntoIds(pieceId, row, conjuntoLinks).filter((id) => id !== conjuntoId)
+    setConjuntoLinks((prev) => removeLink(prev, conjuntoId, pieceId))
+    setDirtyConjuntoLinkIds((prev) => new Set(prev).add(conjuntoId))
+    setRows((prev) => prev.map((r) => {
+      if (r.id !== pieceId) return r
+      if (outros.length > 0) {
+        const nextPrimary = outros[0]
+        const meta = conjuntoMetaById.get(nextPrimary) ?? getConjuntoMeta(nextPrimary, prev)
+        return {
+          ...r,
+          conjunto_id: nextPrimary,
+          conjunto_codigo: meta.codigo,
+          conjunto_nome: meta.nome,
+          dirty: true,
+        }
       }
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Erro ao remover peça do conjunto')
+      return { ...r, conjunto_id: null, conjunto_codigo: '', conjunto_nome: '', dirty: true }
+    }))
+    setSaveStatus('idle')
+    if (editModal === pieceId) {
+      const remaining = getConjuntoPiecesFromRows(
+        rows.map((r) => {
+          if (r.id !== pieceId) return r
+          if (outros.length > 0) {
+            const nextPrimary = outros[0]
+            const meta = conjuntoMetaById.get(nextPrimary) ?? getConjuntoMeta(nextPrimary, rows)
+            return { ...r, conjunto_id: nextPrimary, conjunto_codigo: meta.codigo, conjunto_nome: meta.nome }
+          }
+          return { ...r, conjunto_id: null, conjunto_codigo: '', conjunto_nome: '' }
+        }),
+        conjuntoId,
+        removeLink(conjuntoLinks, conjuntoId, pieceId),
+      )
+      setEditModal(remaining[0]?.id ?? null)
+      if (remaining.length === 0) closeEditModal()
     }
   }
 
@@ -4104,21 +4245,26 @@ export function PecasTable({
   }
 
   async function deleteConjuntoFromDb(conjuntoId: string, snapshotRows: PecaRow[]) {
-    const pieces = snapshotRows.filter((r) => r.conjunto_id === conjuntoId)
-    for (const p of pieces) {
-      if (!p.isNew) {
-        const result = await deletarPeca(p.id)
-        if (!result.ok) throw new Error(result.error ?? 'Erro ao excluir peça do conjunto')
-      }
-      p.fotosNovas.forEach((f) => URL.revokeObjectURL(f.preview))
-    }
-    const hadPersisted = pieces.some((p) => !p.isNew)
+    const pieces = getConjuntoPiecesFromRows(snapshotRows, conjuntoId, conjuntoLinks)
+    const hadPersisted = conjuntosData.has(conjuntoId)
+      || pieces.some((p) => !p.isNew)
+      || snapshotRows.some((r) => r.conjunto_id === conjuntoId && !r.isNew)
     if (hadPersisted) {
       const result = await deletarConjunto(conjuntoId)
       if (!result.ok) throw new Error(result.error ?? 'Erro ao excluir conjunto')
     }
     removeConjuntoFromState(conjuntoId)
-    return snapshotRows.filter((r) => r.conjunto_id !== conjuntoId)
+    setConjuntoLinks((prev) => prev.filter((l) => l.conjunto_id !== conjuntoId))
+    return snapshotRows.map((r) => {
+      if (r.conjunto_id !== conjuntoId) return r
+      const outros = pecaConjuntoIds(r.id, r, conjuntoLinks).filter((id) => id !== conjuntoId)
+      if (outros.length === 0) {
+        return { ...r, conjunto_id: null, conjunto_codigo: '', conjunto_nome: '' }
+      }
+      const nextPrimary = outros[0]
+      const meta = getConjuntoMeta(nextPrimary, snapshotRows)
+      return { ...r, conjunto_id: nextPrimary, conjunto_codigo: meta.codigo, conjunto_nome: meta.nome }
+    })
   }
 
   async function deletePecaFromDb(id: string, snapshotRows: PecaRow[]) {
@@ -4321,7 +4467,7 @@ export function PecasTable({
     const supabase = createClient()
     if (editRow.conjunto_id) {
       const conjuntoId = editRow.conjunto_id
-      const pieces = rowsSnapshot.filter((r) => r.conjunto_id === conjuntoId)
+      const pieces = getConjuntoPiecesFromRows(rowsSnapshot, conjuntoId, conjuntoLinks)
       for (const p of pieces.filter((r) => r.dirty || r.isNew)) {
         const allFotos = await persistPecaRow(supabase, p)
         setRows((prev) => prev.map((r) => r.id === p.id
@@ -4335,6 +4481,16 @@ export function PecasTable({
         setConjuntosData((prev) => {
           const next = new Map(prev)
           next.set(conjuntoId, { ...cdata, fotos: allFotos, fotosNovas: [], novaPrincipal: false, dirty: false })
+          return next
+        })
+      }
+      if (dirtyConjuntoLinkIds.has(conjuntoId)) {
+        const linkRows = pieces.map((p, idx) => ({ peca_id: p.id, ordem: p.ordem ?? idx }))
+        const linkResult = await syncConjuntoPecas(conjuntoId, linkRows)
+        if (!linkResult.ok) throw new Error(linkResult.error)
+        setDirtyConjuntoLinkIds((prev) => {
+          const next = new Set(prev)
+          next.delete(conjuntoId)
           return next
         })
       }
@@ -4363,7 +4519,7 @@ export function PecasTable({
 
   async function finishPublishConjunto(conjuntoId: string) {
     const cdata = conjuntosData.get(conjuntoId) ?? defaultConjuntoData()
-    const pieces = rows.filter((r) => r.conjunto_id === conjuntoId)
+    const pieces = getConjuntoPiecesFromRows(rows, conjuntoId, conjuntoLinks)
     const cdataToSave = { ...cdata, exibir_no_site: true, dirty: true }
     const supabase = createClient()
     const allFotos = await persistConjunto(supabase, conjuntoId, cdataToSave, pieces)
@@ -4406,7 +4562,7 @@ export function PecasTable({
 
   function promptPublishConjunto(conjuntoId: string) {
     const cdata = conjuntosData.get(conjuntoId) ?? defaultConjuntoData()
-    const pieces = rows.filter((r) => r.conjunto_id === conjuntoId)
+    const pieces = getConjuntoPiecesFromRows(rows, conjuntoId, conjuntoLinks)
     const ref = pieces[0]
     const pricing = calcConjuntoPricing(
       pieces, margemVendaConfig, cdata.preco_praticado,
@@ -4457,7 +4613,7 @@ export function PecasTable({
       modalScope = { pecaIds: [session.sourcePecaId, ...session.draftPecaIds] }
     } else if (editRowModal.conjunto_id) {
       modalScope = {
-        pecaIds: rows.filter((r) => r.conjunto_id === editRowModal.conjunto_id).map((r) => r.id),
+        pecaIds: getConjuntoPiecesFromRows(rows, editRowModal.conjunto_id, conjuntoLinks).map((r) => r.id),
         conjuntoIds: [editRowModal.conjunto_id],
       }
     } else {
@@ -4533,18 +4689,28 @@ export function PecasTable({
     setSaving(true); setSaveStatus('idle'); setSaveError(null)
     const supabase = createClient()
     try {
-      const conjuntoIds = new Set(rows.map((r) => r.conjunto_id).filter(Boolean) as string[])
-      for (const conjuntoId of conjuntoIds) {
+      const allConjuntoIds = collectConjuntoIds(rows, conjuntoLinks)
+      for (const conjuntoId of allConjuntoIds) {
         const cdata = conjuntosData.get(conjuntoId) ?? defaultConjuntoData()
-        const conjuntoRows = rows.filter((r) => r.conjunto_id === conjuntoId)
-        if (!cdata.dirty && !conjuntoRows.some((r) => r.dirty)) continue
+        const conjuntoRows = getConjuntoPiecesFromRows(rows, conjuntoId, conjuntoLinks)
+        const linksDirty = dirtyConjuntoLinkIds.has(conjuntoId)
+        if (!cdata.dirty && !conjuntoRows.some((r) => r.dirty) && !linksDirty) continue
         const allFotos = await persistConjunto(supabase, conjuntoId, cdata, conjuntoRows)
         setConjuntosData((prev) => {
           const next = new Map(prev)
           next.set(conjuntoId, { ...cdata, fotos: allFotos, fotosNovas: [], novaPrincipal: false, dirty: false })
           return next
         })
+        const linkRows = conjuntoRows.map((p, idx) => ({ peca_id: p.id, ordem: p.ordem ?? idx }))
+        const linkResult = await syncConjuntoPecas(conjuntoId, linkRows)
+        if (!linkResult.ok) throw new Error(linkResult.error)
       }
+
+      setDirtyConjuntoLinkIds((prev) => {
+        const next = new Set(prev)
+        for (const conjuntoId of allConjuntoIds) next.delete(conjuntoId)
+        return next
+      })
 
       for (const row of rows.filter((r) => r.dirty)) {
         const allFotos = await persistPecaRow(supabase, row)
@@ -4920,8 +5086,11 @@ export function PecasTable({
 
               // ── Data row ───────────────────────────────────────────────────
               const row = item.row
-              const inConjunto = !!row.conjunto_id
-              const conjuntoFenearte = inConjunto ? (conjuntosData.get(row.conjunto_id!)?.fenearte ?? false) : false
+              const activeConjuntoId = item.displayConjuntoId ?? row.conjunto_id
+              const inConjunto = !!activeConjuntoId
+              const conjuntoFenearte = inConjunto
+                ? (conjuntosData.get(activeConjuntoId!)?.fenearte ?? false)
+                : false
 
               const costs = calcRowCosts(
                 row, custoHoraMO, custoHoraFixo,
@@ -4941,7 +5110,7 @@ export function PecasTable({
               const isLastInConjunto = inConjunto && (
                 !nextItem ||
                 nextItem.type === 'conjunto-header' ||
-                (nextItem.type === 'row' && nextItem.row.conjunto_id !== row.conjunto_id)
+                (nextItem.type === 'row' && (nextItem.displayConjuntoId ?? nextItem.row.conjunto_id) !== activeConjuntoId)
               )
               const conjChildSpacing = inConjunto
                 ? `${isFirstInConjunto ? 'pt-4' : ''} ${isLastInConjunto ? 'pb-4 border-b-2 border-terracota/25 mb-1' : ''}`
@@ -4962,7 +5131,7 @@ export function PecasTable({
               const rowSelectKey = displayItemKey(item)
 
               return (
-                <tr key={row.id} id={`peca-row-${row.id}`} className={`transition-colors group ${rowBg} ${conjChildSpacing}`}>
+                <tr key={rowSelectKey} id={`peca-row-${activeConjuntoId ? `${activeConjuntoId}-` : ''}${row.id}`} className={`transition-colors group ${rowBg} ${conjChildSpacing}`}>
 
                   <td className={`px-2 py-2 text-center ${STICKY_CHECKBOX} transition-colors ${stickyBg}`}>
                     <input
@@ -5163,7 +5332,7 @@ export function PecasTable({
       {avulsasPicker && (
         <SelecionarAvulsasModal
           title="Adicionar peça ao conjunto"
-          subtitle="Selecione peças avulsas já cadastradas ou cadastre uma nova em branco."
+          subtitle="Selecione peças já cadastradas (avulsas ou de outros conjuntos) ou cadastre uma nova em branco."
           items={avulsasPickerItems}
           multiSelect
           showCreateBlank
@@ -5341,6 +5510,7 @@ export function PecasTable({
         <PecaDetalhesModal
           row={editRowModal}
           allRows={rows}
+          conjuntoLinks={conjuntoLinks}
           onClose={closeEditModal}
           onUpdatePiece={(id, changes) => update(id, changes)}
           onStatusChangePiece={handleStatusChange}
@@ -5440,7 +5610,7 @@ export function PecasTable({
       })()}
 
       {duplicateConjuntoPrompt && (() => {
-        const pieces = getConjuntoPiecesFromRows(rows, duplicateConjuntoPrompt.conjuntoId)
+        const pieces = getConjuntoPiecesFromRows(rows, duplicateConjuntoPrompt.conjuntoId, conjuntoLinks)
         const ref = pieces[0]
         if (!ref) return null
         return (

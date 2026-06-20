@@ -8,6 +8,7 @@ export interface AvulsaPickerItem {
   codigo: string
   nome: string
   photoSrc: string | null
+  detail?: string
 }
 
 interface Props {
@@ -107,7 +108,7 @@ export function SelecionarAvulsasModal({
           {filtered.length === 0 ? (
             <p className="px-5 py-8 font-sans text-sm text-muted text-center">
               {items.length === 0
-                ? 'Nenhuma peça avulsa disponível.'
+                ? 'Nenhuma peça disponível.'
                 : 'Nenhum resultado para a busca.'}
             </p>
           ) : (
@@ -135,6 +136,9 @@ export function SelecionarAvulsasModal({
                       <div className="min-w-0 flex-1">
                         <p className="font-mono text-sm font-semibold text-carvao">{item.codigo || '—'}</p>
                         <p className="font-sans text-sm text-muted truncate">{item.nome || 'Sem nome'}</p>
+                        {item.detail && (
+                          <p className="font-sans text-[11px] text-terracota/80 truncate mt-0.5">{item.detail}</p>
+                        )}
                       </div>
                     </button>
                   </li>

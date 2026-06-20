@@ -283,20 +283,79 @@ function slugify(nome: string, id: string): string {
   return `${base || 'peca'}-${id.slice(0, 6)}`
 }
 
+export interface ConjuntoPecaLinkPayload {
+  peca_id: string
+  ordem: number
+}
+
+function isMissingTableError(message: string): boolean {
+  return /relation.*does not exist/i.test(message)
+    || /schema cache/i.test(message)
+}
+
 /** Remove peças individuais da loja — só o conjunto pode ser publicado. */
 async function removerPecasDoConjuntoNaLoja(
   supabase: Awaited<ReturnType<typeof createClient>>,
   conjuntoId: string,
 ) {
+  const ids = new Set<string>()
+
+  const { data: links } = await supabase
+    .from('conjunto_pecas')
+    .select('peca_id')
+    .eq('conjunto_id', conjuntoId)
+
+  for (const link of links ?? []) ids.add(link.peca_id)
+
   const { data: pecas } = await supabase
     .from('pecas_estoque')
     .select('id')
     .eq('conjunto_id', conjuntoId)
 
-  if (!pecas?.length) return
+  for (const peca of pecas ?? []) ids.add(peca.id)
 
-  for (const peca of pecas) {
-    await supabase.from('produtos').delete().eq('id', peca.id)
+  for (const id of ids) {
+    await supabase.from('produtos').delete().eq('id', id)
+  }
+}
+
+/** Sincroniza vínculos peça↔conjunto (many-to-many). */
+export async function syncConjuntoPecas(
+  conjuntoId: string,
+  links: ConjuntoPecaLinkPayload[],
+): Promise<ActionResult> {
+  const auth = await requireAdminOrNull()
+  if (!auth) return { ok: false, error: 'Não autorizado' }
+
+  try {
+    const supabase = auth.supabase
+
+    const { error: delError } = await supabase
+      .from('conjunto_pecas')
+      .delete()
+      .eq('conjunto_id', conjuntoId)
+
+    if (delError && !isMissingTableError(delError.message)) {
+      return { ok: false, error: delError.message }
+    }
+
+    if (links.length > 0) {
+      const rows = links.map((l) => ({
+        conjunto_id: conjuntoId,
+        peca_id: l.peca_id,
+        ordem: l.ordem,
+      }))
+      const { error: insError } = await supabase.from('conjunto_pecas').insert(rows)
+      if (insError && !isMissingTableError(insError.message)) {
+        return { ok: false, error: insError.message }
+      }
+    }
+
+    revalidatePath('/admin/pecas')
+    revalidatePath('/loja')
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Erro desconhecido' }
   }
 }
 
@@ -425,6 +484,7 @@ export async function deletarPeca(id: string): Promise<ActionResult> {
 
   try {
     const supabase = auth.supabase
+    await supabase.from('conjunto_pecas').delete().eq('peca_id', id)
     await supabase.from('produtos').delete().eq('id', id)
     const { error } = await supabase
       .from('pecas_estoque')
@@ -446,6 +506,11 @@ export async function deletarConjunto(id: string): Promise<ActionResult> {
   try {
     const supabase = auth.supabase
     await supabase.from('produtos').delete().eq('id', id)
+    await supabase.from('conjunto_pecas').delete().eq('conjunto_id', id)
+    await supabase
+      .from('pecas_estoque')
+      .update({ conjunto_id: null, conjunto_codigo: null, conjunto_nome: null })
+      .eq('conjunto_id', id)
     const { error } = await supabase
       .from('conjuntos')
       .delete()
