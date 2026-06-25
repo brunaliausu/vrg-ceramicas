@@ -81,16 +81,21 @@ export function pecaHasAnyConjunto(
 export function getConjuntoMeta(
   conjuntoId: string,
   rows: PecaConjuntoRowLike[],
-  links: ConjuntoPecaLink[] = [],
 ): { codigo: string; nome: string } {
   const ref = rows.find((r) => r.conjunto_id === conjuntoId)
   if (ref) return { codigo: ref.conjunto_codigo, nome: ref.conjunto_nome }
-  for (const row of rows) {
-    if (pecaInConjunto(row.id, conjuntoId, row, links)) {
-      return { codigo: row.conjunto_codigo, nome: row.conjunto_nome }
-    }
-  }
   return { codigo: '', nome: '' }
+}
+
+export function linkOrdemForPeca(
+  links: ConjuntoPecaLink[],
+  conjuntoId: string,
+  pecaId: string,
+  rowOrdem: number | null,
+): number {
+  const link = links.find((l) => l.conjunto_id === conjuntoId && l.peca_id === pecaId)
+  if (link) return link.ordem
+  return rowOrdem ?? 0
 }
 
 export function getConjuntoPiecesFromRows<T extends PecaConjuntoRowLike>(
@@ -102,9 +107,20 @@ export function getConjuntoPiecesFromRows<T extends PecaConjuntoRowLike>(
     .filter((r) => pecaInConjunto(r.id, conjuntoId, r, links))
     .sort(
       (a, b) =>
-        (a.ordem ?? 0) - (b.ordem ?? 0) ||
-        compareCodigoDisplay(a.codigo ?? '', b.codigo ?? ''),
+        linkOrdemForPeca(links, conjuntoId, a.id, a.ordem ?? null)
+        - linkOrdemForPeca(links, conjuntoId, b.id, b.ordem ?? null)
+        || compareCodigoDisplay(a.codigo ?? '', b.codigo ?? ''),
     )
+}
+
+export function linkRowsForConjunto(
+  links: ConjuntoPecaLink[],
+  conjuntoId: string,
+): { peca_id: string; ordem: number }[] {
+  return links
+    .filter((l) => l.conjunto_id === conjuntoId)
+    .sort((a, b) => a.ordem - b.ordem)
+    .map((l) => ({ peca_id: l.peca_id, ordem: l.ordem }))
 }
 
 export function collectConjuntoIds(

@@ -18,11 +18,10 @@ export function linkCompraPecaDoConjunto(
   return `https://wa.me/${NUMERO}?text=${msg}`
 }
 
-export function linkCompra(nome: string, preco: number, slug: string): string {
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://vrgceramicas.com.br'
-  const linkPeca = `${siteUrl}/produtos/${slug}`
+/** Link wa.me para compra — `nomePeca` é o nome exato do produto/conjunto exibido na página. */
+export function linkCompra(nomePeca: string, _preco: number, _slug: string): string {
   const msg = encodeURIComponent(
-    `Olá, gostaria de mais informações sobre a peça *${nome}*.\n\n${linkPeca}`
+    `Olá! Encontrei a peça *${nomePeca}* no site e tenho interesse em realizar a compra. Poderia me informar os detalhes e como posso prosseguir com o pedido?\n\nObrigado(a)!`,
   )
   return `https://wa.me/${NUMERO}?text=${msg}`
 }
