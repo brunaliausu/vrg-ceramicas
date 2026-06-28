@@ -126,6 +126,23 @@ CREATE POLICY "configuracoes_admin_update"
   WITH CHECK (public.is_admin());
 
 -- ============================================================
+-- conjunto_pecas (peça em vários conjuntos)
+-- ============================================================
+DROP POLICY IF EXISTS "conjunto_pecas_public_read" ON public.conjunto_pecas;
+DROP POLICY IF EXISTS "conjunto_pecas_admin_all" ON public.conjunto_pecas;
+
+CREATE POLICY "conjunto_pecas_public_read"
+  ON public.conjunto_pecas FOR SELECT
+  TO anon, authenticated
+  USING (true);
+
+CREATE POLICY "conjunto_pecas_admin_all"
+  ON public.conjunto_pecas FOR ALL
+  TO authenticated
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
+
+-- ============================================================
 -- storage.objects (bucket produtos)
 -- ============================================================
 DROP POLICY IF EXISTS "Admin faz upload" ON storage.objects;

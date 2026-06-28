@@ -452,7 +452,7 @@ export async function salvarConjunto(conjunto: ConjuntoPayload): Promise<ActionR
           id:               conjunto.id,
           nome:             conjunto.nome     || conjunto.codigo || 'Conjunto',
           slug:             slugify(conjunto.nome || conjunto.codigo || 'conjunto', conjunto.id),
-          categoria:        categoriaParaTabelaProdutos(conjunto.categoria),
+          categoria:        categoriaParaTabelaProdutos('Conjuntos'),
           descricao:        conjunto.descricao || null,
           preco:            conjunto.preco_venda,
           status:           statusLoja,

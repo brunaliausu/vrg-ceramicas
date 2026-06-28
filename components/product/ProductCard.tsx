@@ -6,10 +6,13 @@ import type { Produto } from '@/types'
 
 interface ProductCardProps {
   produto: Produto
+  /** Sobrescreve a categoria exibida no card (ex.: filtro Conjuntos na loja). */
+  categoriaExibicao?: string
 }
 
-export function ProductCard({ produto }: ProductCardProps) {
+export function ProductCard({ produto, categoriaExibicao }: ProductCardProps) {
   const { nome, slug, categoria, status, imagens } = produto
+  const categoriaLabel = categoriaExibicao ?? formatCategoriaDisplay(categoria)
   const imagem = imagens?.[0]
   const mostrarBadge = status === 'Vendido' || status === 'Sob Encomenda'
 
@@ -44,7 +47,7 @@ export function ProductCard({ produto }: ProductCardProps) {
 
       {/* Info */}
       <div className="space-y-0.5">
-        <p className="font-sans text-xs tracking-widest uppercase text-muted">{formatCategoriaDisplay(categoria)}</p>
+        <p className="font-sans text-xs tracking-widest uppercase text-muted">{categoriaLabel}</p>
         <h3 className="font-serif text-base font-normal text-carvao group-hover:text-terracota transition-colors leading-snug">
           {nome}
         </h3>

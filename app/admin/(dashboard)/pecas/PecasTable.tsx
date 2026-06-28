@@ -3896,17 +3896,21 @@ export function PecasTable({
   }
 
   function addAvulsasToConjunto(conjuntoId: string, rowIds: string[]) {
-    const ref = rows.find((r) => r.conjunto_id === conjuntoId)
-      ?? rows.find((r) => pecaInConjunto(r.id, conjuntoId, r, conjuntoLinks))
-    if (!ref || rowIds.length === 0) return
+    if (rowIds.length === 0) return
+
     const meta = conjuntoMetaById.get(conjuntoId) ?? getConjuntoMeta(conjuntoId, rows)
     const existing = getConjuntoPiecesFromRows(rows, conjuntoId, conjuntoLinks)
-    const pieceStatus = conjuntoStatusForPieces(conjuntoId, ref.status)
+    const pieceStatus = conjuntoStatusForPieces(conjuntoId)
+
+    const toAdd = rowIds.filter((pecaId) => {
+      const row = rows.find((r) => r.id === pecaId)
+      return row && !pecaInConjunto(pecaId, conjuntoId, row, conjuntoLinks)
+    })
+    if (toAdd.length === 0) return
 
     setConjuntoLinks((prev) => {
       let next = prev
-      rowIds.forEach((pecaId, idx) => {
-        if (pecaInConjunto(pecaId, conjuntoId, rows.find((r) => r.id === pecaId)!, prev)) return
+      toAdd.forEach((pecaId, idx) => {
         next = addLink(next, conjuntoId, pecaId, existing.length + idx)
       })
       return next
@@ -3914,12 +3918,13 @@ export function PecasTable({
     setDirtyConjuntoLinkIds((prev) => new Set(prev).add(conjuntoId))
 
     setRows((prev) => prev.map((r) => {
-      if (!rowIds.includes(r.id)) return r
+      if (!toAdd.includes(r.id)) return r
+      // Peça já pertence a outro conjunto — mantém conjunto primário; vínculo extra via conjuntoLinks.
       if (r.conjunto_id) return r
       return {
         ...r,
         ...clearPecaSiteFields(pieceStatus),
-        ordem: existing.length + rowIds.indexOf(r.id),
+        ordem: existing.length + toAdd.indexOf(r.id),
         conjunto_id: conjuntoId,
         conjunto_codigo: meta.codigo,
         conjunto_nome: meta.nome,
@@ -3927,7 +3932,7 @@ export function PecasTable({
       }
     }))
     setAvulsasPicker(null)
-    focusConjuntoPiece(rowIds[0])
+    focusConjuntoPiece(toAdd[0])
     setSaveStatus('idle')
   }
 
@@ -3960,11 +3965,10 @@ export function PecasTable({
   }
 
   function joinConjunto(rowId: string, conjuntoId: string) {
-    const ref = rows.find((r) => r.conjunto_id === conjuntoId)
-      ?? rows.find((r) => pecaInConjunto(r.id, conjuntoId, r, conjuntoLinks))
-    if (!ref) return
+    const row = rows.find((r) => r.id === rowId)
+    if (!row || pecaInConjunto(rowId, conjuntoId, row, conjuntoLinks)) return
     const meta = conjuntoMetaById.get(conjuntoId) ?? getConjuntoMeta(conjuntoId, rows)
-    const pieceStatus = conjuntoStatusForPieces(conjuntoId, ref.status)
+    const pieceStatus = conjuntoStatusForPieces(conjuntoId)
     const existing = getConjuntoPiecesFromRows(rows, conjuntoId, conjuntoLinks)
     setConjuntoLinks((prev) => addLink(prev, conjuntoId, rowId, existing.length))
     setDirtyConjuntoLinkIds((prev) => new Set(prev).add(conjuntoId))
@@ -4158,15 +4162,13 @@ export function PecasTable({
   }
 
   function addAnotherPieceInModal(conjuntoId: string) {
-    const ref = rows.find((r) => r.conjunto_id === conjuntoId)
-      ?? getConjuntoPiecesFromRows(rows, conjuntoId, conjuntoLinks)[0]
-    if (!ref) return
     const meta = conjuntoMetaById.get(conjuntoId) ?? getConjuntoMeta(conjuntoId, rows)
     const cdata = conjuntosData.get(conjuntoId)
     const existing = getConjuntoPiecesFromRows(rows, conjuntoId, conjuntoLinks)
-    const categoria = cdata?.categoria || ref.categoria || ''
+    const ref = rows.find((r) => r.conjunto_id === conjuntoId) ?? existing[0]
+    const categoria = cdata?.categoria || ref?.categoria || ''
     const newRow: PecaRow = {
-      ...emptyRow(conjuntoId, meta.codigo, meta.nome, conjuntoStatusForPieces(conjuntoId, ref.status)),
+      ...emptyRow(conjuntoId, meta.codigo, meta.nome, conjuntoStatusForPieces(conjuntoId, ref?.status ?? '')),
       ordem: existing.length,
       categoria,
       codigo: suggestNewPecaCodigo(conjuntoId, categoria),

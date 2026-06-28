@@ -23,13 +23,16 @@ ON CONFLICT (conjunto_id, peca_id) DO NOTHING;
 ALTER TABLE conjunto_pecas ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "conjunto_pecas_public_read" ON conjunto_pecas;
-CREATE POLICY "conjunto_pecas_public_read" ON conjunto_pecas
-  FOR SELECT USING (true);
+CREATE POLICY "conjunto_pecas_public_read"
+  ON conjunto_pecas FOR SELECT
+  TO anon, authenticated
+  USING (true);
 
 DROP POLICY IF EXISTS "conjunto_pecas_admin_all" ON conjunto_pecas;
-CREATE POLICY "conjunto_pecas_admin_all" ON conjunto_pecas
-  FOR ALL USING (
-    auth.jwt() ->> 'role' = 'admin'
-  ) WITH CHECK (
-    auth.jwt() ->> 'role' = 'admin'
-  );
+CREATE POLICY "conjunto_pecas_admin_all"
+  ON conjunto_pecas FOR ALL
+  TO authenticated
+  USING (public.is_admin())
+  WITH CHECK (public.is_admin());
+
+NOTIFY pgrst, 'reload schema';

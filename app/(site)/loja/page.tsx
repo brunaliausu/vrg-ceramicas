@@ -13,6 +13,13 @@ interface Props {
   searchParams: Promise<SearchParams>
 }
 
+async function getPublishedConjuntoIds(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+): Promise<string[]> {
+  const { data } = await supabase.from('conjuntos').select('id')
+  return (data ?? []).map((c) => c.id)
+}
+
 async function getProdutos(filtros: SearchParams): Promise<Produto[]> {
   try {
     const supabase = await createClient()
@@ -24,6 +31,7 @@ async function getProdutos(filtros: SearchParams): Promise<Produto[]> {
       .single()
 
     const mostrarVendidos = config?.mostrar_vendidos ?? true
+    const conjuntoIds = await getPublishedConjuntoIds(supabase)
 
     let query = supabase
       .from('produtos')
@@ -34,9 +42,15 @@ async function getProdutos(filtros: SearchParams): Promise<Produto[]> {
       query = query.neq('status', 'Vendido')
     }
 
-    if (filtros.categoria) {
+    if (filtros.categoria === 'Conjuntos') {
+      if (conjuntoIds.length === 0) return []
+      query = query.in('id', conjuntoIds)
+    } else if (filtros.categoria) {
       const cats = categoriasParaFiltroLoja(filtros.categoria as Categoria)
       query = cats.length === 1 ? query.eq('categoria', cats[0]) : query.in('categoria', cats)
+      if (conjuntoIds.length > 0) {
+        query = query.not('id', 'in', `(${conjuntoIds.join(',')})`)
+      }
     }
 
     if (filtros.colecao) {
@@ -102,16 +116,6 @@ export default async function LojaPage({ searchParams }: Props) {
             {cat}
           </a>
         ))}
-        <a
-          href="/loja?colecao=flor-de-lis"
-          className={`font-sans text-xs tracking-wide px-4 py-2 border transition-colors ${
-            colecaoAtiva === 'flor-de-lis'
-              ? 'border-terracota bg-terracota text-cru'
-              : 'border-pedra text-carvao/60 hover:border-terracota hover:text-terracota'
-          }`}
-        >
-          Flor de Lis
-        </a>
       </div>
 
       {/* Grade de produtos */}
@@ -128,7 +132,10 @@ export default async function LojaPage({ searchParams }: Props) {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-12">
           {produtos.map((p) => (
             <div key={p.id} className={p.status === 'Vendido' ? 'opacity-55' : ''}>
-              <ProductCard produto={p} />
+              <ProductCard
+                produto={p}
+                categoriaExibicao={categoriaAtiva === 'Conjuntos' ? 'Conjuntos' : undefined}
+              />
             </div>
           ))}
         </div>
