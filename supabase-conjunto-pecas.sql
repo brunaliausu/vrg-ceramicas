@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS conjunto_pecas (
   conjunto_id uuid NOT NULL,
   peca_id     uuid NOT NULL,
   ordem       integer NOT NULL DEFAULT 0,
+  quantidade  integer NOT NULL DEFAULT 1 CHECK (quantidade >= 1),
   PRIMARY KEY (conjunto_id, peca_id)
 );
 

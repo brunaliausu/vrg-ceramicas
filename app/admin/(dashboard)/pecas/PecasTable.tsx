@@ -15,6 +15,9 @@ import {
   pecaConjuntoIds,
   removeLink,
   linkRowsForConjunto,
+  linkQuantidade,
+  quantidadeMapForConjunto,
+  updateLinkQuantidade,
 } from './conjuntoLinks'
 import { salvarPeca, salvarConjunto, deletarPeca, deletarConjunto, syncConjuntoPecas } from './actions'
 import type { CustoItem, ConjuntoDB } from './page'
@@ -763,6 +766,7 @@ function calcRowCosts(
 
 function calcConjuntoTotals(
   conjuntoRows: PecaRow[],
+  quantidadeByPecaId: Map<string, number>,
   custoHoraMO: number,
   custoHoraFixo: number,
   embalagemItems: CustoItem[],
@@ -779,19 +783,20 @@ function calcConjuntoTotals(
   let valBisc = 0, valQueima = 0, maoDeObra = 0, rateio = 0, custoExtra = 0
 
   conjuntoRows.forEach((row) => {
+    const q = quantidadeByPecaId.get(row.id) ?? 1
     const c = calcRowCosts(row, custoHoraMO, custoHoraFixo, embalagemItems, argilaItems, esmalteItems, engobeItems, tintaItems, biscoitoItems, queimaAltaItems)
-    totalArgilaKg += nv(row.qnt_argila_kg)
-    totalCusto += c.custoTotal
-    valEmb += c.valEmb ?? 0
-    valArg += c.valArg ?? 0
-    valEsmalte += c.valEsmalte ?? 0
-    valEngobe += c.valEngobe ?? 0
-    valTinta += c.valTinta ?? 0
-    valBisc += c.valBisc ?? 0
-    valQueima += c.valQueima ?? 0
-    maoDeObra += c.maoDeObra ?? 0
-    rateio += c.rateio ?? 0
-    custoExtra += c.custoExtra
+    totalArgilaKg += nv(row.qnt_argila_kg) * q
+    totalCusto += c.custoTotal * q
+    valEmb += (c.valEmb ?? 0) * q
+    valArg += (c.valArg ?? 0) * q
+    valEsmalte += (c.valEsmalte ?? 0) * q
+    valEngobe += (c.valEngobe ?? 0) * q
+    valTinta += (c.valTinta ?? 0) * q
+    valBisc += (c.valBisc ?? 0) * q
+    valQueima += (c.valQueima ?? 0) * q
+    maoDeObra += (c.maoDeObra ?? 0) * q
+    rateio += (c.rateio ?? 0) * q
+    custoExtra += c.custoExtra * q
   })
 
   return {
@@ -803,6 +808,7 @@ function calcConjuntoTotals(
 
 function calcConjuntoPricing(
   conjuntoRows: PecaRow[],
+  quantidadeByPecaId: Map<string, number>,
   margemVenda: number,
   precoPraticadoStr: string,
   custoHoraMO: number,
@@ -816,7 +822,7 @@ function calcConjuntoPricing(
   queimaAltaItems: CustoItem[],
 ) {
   const totals = calcConjuntoTotals(
-    conjuntoRows, custoHoraMO, custoHoraFixo,
+    conjuntoRows, quantidadeByPecaId, custoHoraMO, custoHoraFixo,
     embalagemItems, argilaItems, esmalteItems, engobeItems, tintaItems, biscoitoItems, queimaAltaItems,
   )
   const margem = effectiveMargem(margemVenda)
@@ -1450,13 +1456,25 @@ function formatPieceCostPart(value: number): string {
   return Number.isInteger(value) ? String(value) : fmt(value)
 }
 
-function formatPerPieceCostSum(values: number[]): string {
-  if (values.length === 0) return '—'
-  return values.map(formatPieceCostPart).join('+')
+function formatConjuntoCostUnitDetail(
+  pieces: PecaRow[],
+  quantidadeByPecaId: Map<string, number>,
+  unitValueForPiece: (piece: PecaRow, index: number) => number,
+): string {
+  const parts: string[] = []
+  pieces.forEach((piece, index) => {
+    const qty = quantidadeByPecaId.get(piece.id) ?? 1
+    const unit = unitValueForPiece(piece, index)
+    if (unit <= 0) return
+    const unitLabel = formatPieceCostPart(unit)
+    parts.push(qty > 1 ? `${unitLabel} × ${qty} un.` : unitLabel)
+  })
+  return parts.length > 0 ? parts.join(' + ') : '—'
 }
 
 function buildConjuntoAggregatedMaterialLines(
   pieces: PecaRow[],
+  quantidadeByPecaId: Map<string, number>,
   totals: ConjuntoCostTotals,
   custoHoraMO: number,
   custoHoraFixo: number,
@@ -1472,11 +1490,13 @@ function buildConjuntoAggregatedMaterialLines(
   const pieceCosts = pieces.map((p) =>
     calcRowCosts(p, custoHoraMO, custoHoraFixo, embalagemItems, argilaItems, esmalteItems, engobeItems, tintaItems, biscoitoItems, queimaAltaItems),
   )
+  const unitDetail = (getter: (cost: ReturnType<typeof calcRowCosts>) => number) =>
+    formatConjuntoCostUnitDetail(pieces, quantidadeByPecaId, (piece, index) => getter(pieceCosts[index]))
 
   if (totals.valEmb > 0) {
     lines.push({
       label: 'Embalagem',
-      unitText: formatPerPieceCostSum(pieceCosts.map((c) => c.valEmb ?? 0)),
+      unitText: unitDetail((c) => c.valEmb ?? 0),
       total: totals.valEmb,
     })
   }
@@ -1484,7 +1504,7 @@ function buildConjuntoAggregatedMaterialLines(
   if (totals.valArg > 0) {
     lines.push({
       label: 'Argila',
-      unitText: formatPerPieceCostSum(pieceCosts.map((c) => c.valArg ?? 0)),
+      unitText: unitDetail((c) => c.valArg ?? 0),
       total: totals.valArg,
     })
   }
@@ -1492,7 +1512,7 @@ function buildConjuntoAggregatedMaterialLines(
   if (totals.valEsmalte > 0) {
     lines.push({
       label: 'Esmalte',
-      unitText: formatPerPieceCostSum(pieceCosts.map((c) => c.valEsmalte ?? 0)),
+      unitText: unitDetail((c) => c.valEsmalte ?? 0),
       total: totals.valEsmalte,
     })
   }
@@ -1500,7 +1520,7 @@ function buildConjuntoAggregatedMaterialLines(
   if (totals.valEngobe > 0) {
     lines.push({
       label: 'Engobe',
-      unitText: formatPerPieceCostSum(pieceCosts.map((c) => c.valEngobe ?? 0)),
+      unitText: unitDetail((c) => c.valEngobe ?? 0),
       total: totals.valEngobe,
     })
   }
@@ -1508,7 +1528,7 @@ function buildConjuntoAggregatedMaterialLines(
   if (totals.valTinta > 0) {
     lines.push({
       label: 'Tinta',
-      unitText: formatPerPieceCostSum(pieceCosts.map((c) => c.valTinta ?? 0)),
+      unitText: unitDetail((c) => c.valTinta ?? 0),
       total: totals.valTinta,
     })
   }
@@ -1516,7 +1536,7 @@ function buildConjuntoAggregatedMaterialLines(
   if (totals.valBisc > 0) {
     lines.push({
       label: 'Primeira queima (biscoito)',
-      unitText: formatPerPieceCostSum(pieceCosts.map((c) => c.valBisc ?? 0)),
+      unitText: unitDetail((c) => c.valBisc ?? 0),
       total: totals.valBisc,
     })
   }
@@ -1524,7 +1544,7 @@ function buildConjuntoAggregatedMaterialLines(
   if (totals.valQueima > 0) {
     lines.push({
       label: 'Segunda queima (alta ou baixa)',
-      unitText: formatPerPieceCostSum(pieceCosts.map((c) => c.valQueima ?? 0)),
+      unitText: unitDetail((c) => c.valQueima ?? 0),
       total: totals.valQueima,
     })
   }
@@ -1534,6 +1554,7 @@ function buildConjuntoAggregatedMaterialLines(
 
 function ConjuntoCustosResumo({
   pieces,
+  quantidadeByPecaId,
   totals,
   custoHoraMO,
   custoHoraFixo,
@@ -1546,6 +1567,7 @@ function ConjuntoCustosResumo({
   queimaAltaItems,
 }: {
   pieces: PecaRow[]
+  quantidadeByPecaId: Map<string, number>
   totals: ConjuntoCostTotals
   custoHoraMO: number
   custoHoraFixo: number
@@ -1557,34 +1579,61 @@ function ConjuntoCustosResumo({
   biscoitoItems: CustoItem[]
   queimaAltaItems: CustoItem[]
 }) {
+  const pieceCosts = pieces.map((p) =>
+    calcRowCosts(p, custoHoraMO, custoHoraFixo, embalagemItems, argilaItems, esmalteItems, engobeItems, tintaItems, biscoitoItems, queimaAltaItems),
+  )
   const materialLines = buildConjuntoAggregatedMaterialLines(
-    pieces, totals, custoHoraMO, custoHoraFixo,
+    pieces, quantidadeByPecaId, totals, custoHoraMO, custoHoraFixo,
     embalagemItems, argilaItems, esmalteItems, engobeItems, tintaItems, biscoitoItems, queimaAltaItems,
   )
+  const maoDeObraDetail = formatConjuntoCostUnitDetail(
+    pieces, quantidadeByPecaId, (_piece, index) => pieceCosts[index]?.maoDeObra ?? 0,
+  )
+  const rateioDetail = formatConjuntoCostUnitDetail(
+    pieces, quantidadeByPecaId, (_piece, index) => pieceCosts[index]?.rateio ?? 0,
+  )
+  const custoExtraDetail = formatConjuntoCostUnitDetail(
+    pieces, quantidadeByPecaId, (piece) => nv(piece.custo_extra),
+  )
+
   return (
     <div className="rounded-sm border border-pedra/40 px-4 py-3 space-y-3">
       <div>
-        <p className="font-sans text-[9px] tracking-widest uppercase text-muted mb-2">Materiais (soma das peças)</p>
+        <p className="font-sans text-[9px] tracking-widest uppercase text-muted mb-2">
+          Materiais (soma das peças · unitário × quantidade)
+        </p>
         <ModalMateriaisResumo lines={materialLines} />
       </div>
       <div className="border-t border-pedra/25 pt-2 space-y-0">
-        <div className="grid grid-cols-[1fr_96px] gap-4 items-center py-2.5 border-b border-pedra/25">
-          <span className="font-sans text-sm text-carvao">Mão de obra</span>
-          <ModalValor value={totals.maoDeObra > 0 ? totals.maoDeObra : null} />
-        </div>
-        <div className="grid grid-cols-[1fr_96px] gap-4 items-center py-2.5 border-b border-pedra/25">
-          <span className="font-sans text-sm text-carvao">Rateio custo fixo</span>
-          <ModalValor value={totals.rateio > 0 ? totals.rateio : null} />
-        </div>
-        <div className="grid grid-cols-[1fr_96px] gap-4 items-center py-2.5 border-b border-pedra/25">
-          <span className="font-sans text-sm text-carvao">Custo extra</span>
-          <ModalValor value={totals.custoExtra > 0 ? totals.custoExtra : null} />
-        </div>
-        <div className="grid grid-cols-[1fr_96px] gap-4 items-center py-2.5">
-          <span className="font-sans text-sm font-semibold text-carvao">Custo total</span>
-          <ModalValor value={totals.totalCusto > 0 ? totals.totalCusto : null} />
-        </div>
+        <ConjuntoCustoSummaryRow label="Mão de obra" total={totals.maoDeObra} unitDetail={maoDeObraDetail} />
+        <ConjuntoCustoSummaryRow label="Rateio custo fixo" total={totals.rateio} unitDetail={rateioDetail} />
+        <ConjuntoCustoSummaryRow label="Custo extra" total={totals.custoExtra} unitDetail={custoExtraDetail} />
+        <ConjuntoCustoSummaryRow label="Custo total" total={totals.totalCusto} bold />
       </div>
+    </div>
+  )
+}
+
+function ConjuntoCustoSummaryRow({
+  label,
+  total,
+  unitDetail,
+  bold = false,
+}: {
+  label: string
+  total: number
+  unitDetail?: string
+  bold?: boolean
+}) {
+  return (
+    <div className={`grid grid-cols-[1fr_96px] gap-4 items-center py-2.5 ${bold ? '' : 'border-b border-pedra/25'}`}>
+      <div>
+        <span className={`font-sans text-sm ${bold ? 'font-semibold' : ''} text-carvao`}>{label}</span>
+        {unitDetail && unitDetail !== '—' && (
+          <p className="font-sans text-[10px] text-muted/70 mt-0.5">{unitDetail}</p>
+        )}
+      </div>
+      <ModalValor value={total > 0 ? total : null} />
     </div>
   )
 }
@@ -1812,7 +1861,7 @@ const MODAL_SEL_FULL = `${selectCls} w-full`
 const MODAL_LBL = 'font-sans text-[9px] tracking-widest uppercase text-muted block mb-1.5'
 
 function PecaModalPieceFields({
-  piece, index, inConjunto, canRemove, highlighted, statusValue, codigoError, highlightPublicationFields, onUpdate, onCategoriaChange, onCodigoChange, onCodigoCommit, onStatusChange, onOpenFotos, onPreviewFoto, onAddFotos, onRemove,
+  piece, index, inConjunto, canRemove, highlighted, statusValue, codigoError, highlightPublicationFields, quantidade = 1, onQuantidadeChange, onUpdate, onCategoriaChange, onCodigoChange, onCodigoCommit, onStatusChange, onOpenFotos, onPreviewFoto, onAddFotos, onRemove,
   margemVendaConfig,
   custoHoraFixo, custoHoraMO,
   embalagemItems, argilaItems, esmalteItems, engobeItems, tintaItems, biscoitoItems, queimaAltaItems,
@@ -1825,6 +1874,8 @@ function PecaModalPieceFields({
   statusValue?: string
   codigoError?: string
   highlightPublicationFields?: PublicationFieldKey[]
+  quantidade?: number
+  onQuantidadeChange?: (quantidade: number) => void
   onUpdate: (changes: Partial<PecaRow>) => void
   onCategoriaChange?: (categoria: string) => void
   onCodigoChange: (value: string) => void
@@ -1956,6 +2007,22 @@ function PecaModalPieceFields({
             <label className={MODAL_LBL}>Nome</label>
             <input type="text" value={piece.nome} onChange={(e) => onUpdate({ nome: e.target.value })} placeholder="Nome da peça" className={MODAL_INP} />
           </div>
+          {inConjunto && onQuantidadeChange && (
+            <div>
+              <label className={MODAL_LBL}>Quantidade no conjunto</label>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={quantidade}
+                onChange={(e) => onQuantidadeChange(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                className={MODAL_INP_NUM}
+              />
+              <p className="font-sans text-[9px] text-muted/60 mt-1">
+                Unidades desta peça neste conjunto. O custo e preço do conjunto multiplicam por esta quantidade.
+              </p>
+            </div>
+          )}
           {inConjunto && (
             <div className="col-span-2">
               <label className={MODAL_LBL}>Status da peça</label>
@@ -2054,6 +2121,11 @@ function PecaModalPieceFields({
         <div>
           <label className={MODAL_LBL}>Custo extra desta peça (R$)</label>
           <input type="number" min="0" step="0.01" value={piece.custo_extra} onChange={(e) => onUpdate({ custo_extra: e.target.value })} placeholder="0" className={MODAL_INP_NUM} />
+          {quantidade > 1 && custoTotal > 0 && (
+            <p className="font-sans text-[9px] text-muted/70 mt-1.5 text-right tabular-nums">
+              No conjunto: {quantidade} un. × R$ {fmt(custoTotal)} = R$ {fmt(custoTotal * quantidade)}
+            </p>
+          )}
         </div>
       )}
 
@@ -2123,7 +2195,7 @@ function PecaModalPieceFields({
 
 function PecaDetalhesModal({
   row, allRows, conjuntoLinks, activeConjuntoId, onClose, onUpdatePiece, onStatusChangePiece, onConjuntoClick,
-  onOpenPieceFotos, onAddPieceFotos, onPreviewPieceFotos, onAddAnotherPiece, onRemovePiece,
+  onOpenPieceFotos, onAddPieceFotos, onPreviewPieceFotos,   onAddAnotherPiece, onRemovePiece, onUpdateLinkQuantidade,
   lockConjunto, conjuntoData,
   onCreateConjuntoDraft, onClearConjunto,
   onUpdateConjuntoMeta, onUpdateConjuntoData, onConjuntoStatusChange, onOpenConjuntoFotos, onPreviewConjuntoFotos, onAddConjuntoFotos,
@@ -2164,6 +2236,7 @@ function PecaDetalhesModal({
   onAddPieceFotos: (id: string, files: FileList) => void
   onAddAnotherPiece: () => void
   onRemovePiece: (id: string) => void
+  onUpdateLinkQuantidade: (pecaId: string, quantidade: number) => void
   lockConjunto: boolean
   conjuntoData: ConjuntoData | null
   onCreateConjuntoDraft: () => void
@@ -2270,9 +2343,18 @@ function PecaDetalhesModal({
   const showStandalonePublication = isNew && novoTipo === 'avulsa'
   const showEditPublication = !isNew && !inConjunto
 
-  const conjuntoPricing = showConjuntoConfig && cdata
+  const conjuntoTotalUnidades = activeConjuntoId
+    ? conjuntoPieces.reduce(
+      (sum, p) => sum + linkQuantidade(conjuntoLinks, activeConjuntoId, p.id),
+      0,
+    )
+    : conjuntoPieces.length
+
+  const conjuntoPricing = showConjuntoConfig && cdata && activeConjuntoId
     ? calcConjuntoPricing(
-      conjuntoPieces, margemVendaConfig, cdata.preco_praticado,
+      conjuntoPieces,
+      quantidadeMapForConjunto(conjuntoLinks, activeConjuntoId),
+      margemVendaConfig, cdata.preco_praticado,
       custoHoraMO, custoHoraFixo, embalagemItems, argilaItems, esmalteItems, engobeItems, tintaItems, biscoitoItems, queimaAltaItems,
     )
     : null
@@ -2459,6 +2541,8 @@ function PecaDetalhesModal({
                   piece={piece}
                   index={i}
                   inConjunto
+                  quantidade={activeConjuntoId ? linkQuantidade(conjuntoLinks, activeConjuntoId, piece.id) : 1}
+                  onQuantidadeChange={(q) => onUpdateLinkQuantidade(piece.id, q)}
                   highlighted={highlightPieceId === piece.id}
                   canRemove={conjuntoPieces.length > 1}
                   onUpdate={(changes) => onUpdatePiece(piece.id, changes)}
@@ -2495,10 +2579,11 @@ function PecaDetalhesModal({
                   <div>
                     <ModalSectionTitle>Custos do conjunto</ModalSectionTitle>
                     <p className="font-sans text-[10px] text-muted mb-3">
-                      {conjuntoPieces.length} {conjuntoPieces.length === 1 ? 'peça' : 'peças'} — soma de materiais, mão de obra, rateio e custos extras
+                      {conjuntoTotalUnidades} {conjuntoTotalUnidades === 1 ? 'unidade' : 'unidades'} em {conjuntoPieces.length} {conjuntoPieces.length === 1 ? 'tipo de peça' : 'tipos de peça'} — soma de materiais, mão de obra, rateio e custos extras
                     </p>
                     <ConjuntoCustosResumo
                       pieces={conjuntoPieces}
+                      quantidadeByPecaId={quantidadeMapForConjunto(conjuntoLinks, activeConjuntoId)}
                       totals={conjuntoPricing}
                       custoHoraMO={custoHoraMO}
                       custoHoraFixo={custoHoraFixo}
@@ -2973,7 +3058,9 @@ export function PecasTable({
       if (item.type === 'conjunto-header') {
         const cdata = conjuntosData.get(item.conjuntoId) ?? defaultConjuntoData()
         const conjPricing = calcConjuntoPricing(
-          item.rows, margemVendaConfig, cdata.preco_praticado,
+          item.rows,
+          quantidadeMapForConjunto(conjuntoLinks, item.conjuntoId),
+          margemVendaConfig, cdata.preco_praticado,
           custoHoraMO, custoHoraFixo,
           embalagemItems, argilaItems, esmalteItems, engobeItems, tintaItems, biscoitoItems, queimaAltaItems,
         )
@@ -3810,7 +3897,9 @@ export function PecasTable({
     const pieces = getConjuntoPiecesFromRows(rows, conjuntoId, conjuntoLinks)
     const ref = pieces[0]
     const pricing = calcConjuntoPricing(
-      pieces, margemVendaConfig, cdata.preco_praticado,
+      pieces,
+      quantidadeMapForConjunto(conjuntoLinks, conjuntoId),
+      margemVendaConfig, cdata.preco_praticado,
       custoHoraMO, custoHoraFixo,
       embalagemItems, argilaItems, esmalteItems, engobeItems, tintaItems, biscoitoItems, queimaAltaItems,
     )
@@ -3933,6 +4022,12 @@ export function PecasTable({
     }))
     setAvulsasPicker(null)
     focusConjuntoPiece(toAdd[0])
+    setSaveStatus('idle')
+  }
+
+  function setConjuntoPieceQuantidade(conjuntoId: string, pecaId: string, quantidade: number) {
+    setConjuntoLinks((prev) => updateLinkQuantidade(prev, conjuntoId, pecaId, quantidade))
+    setDirtyConjuntoLinkIds((prev) => new Set(prev).add(conjuntoId))
     setSaveStatus('idle')
   }
 
@@ -4553,7 +4648,9 @@ export function PecasTable({
   ): Promise<string[]> {
     const allFotos = await uploadConjuntoFotos(supabase, conjuntoId, cdata)
     const pricing = calcConjuntoPricing(
-      conjuntoRows, margemVendaConfig, cdata.preco_praticado,
+      conjuntoRows,
+      quantidadeMapForConjunto(conjuntoLinks, conjuntoId),
+      margemVendaConfig, cdata.preco_praticado,
       custoHoraMO, custoHoraFixo,
       embalagemItems, argilaItems, esmalteItems, engobeItems, tintaItems, biscoitoItems, queimaAltaItems,
     )
@@ -4688,7 +4785,9 @@ export function PecasTable({
     const pieces = getConjuntoPiecesFromRows(rows, conjuntoId, conjuntoLinks)
     const ref = pieces[0]
     const pricing = calcConjuntoPricing(
-      pieces, margemVendaConfig, cdata.preco_praticado,
+      pieces,
+      quantidadeMapForConjunto(conjuntoLinks, conjuntoId),
+      margemVendaConfig, cdata.preco_praticado,
       custoHoraMO, custoHoraFixo,
       embalagemItems, argilaItems, esmalteItems, engobeItems, tintaItems, biscoitoItems, queimaAltaItems,
     )
@@ -5061,9 +5160,15 @@ export function PecasTable({
                   : (cdata.fotos[0] ?? cdata.fotosNovas[0]?.preview ?? null)
                 const totalFotosConj = cdata.fotos.length + cdata.fotosNovas.length
                 const conjPricing = calcConjuntoPricing(
-                  item.rows, margemVendaConfig, cdata.preco_praticado,
+                  item.rows,
+                  quantidadeMapForConjunto(conjuntoLinks, item.conjuntoId),
+                  margemVendaConfig, cdata.preco_praticado,
                   custoHoraMO, custoHoraFixo,
                   embalagemItems, argilaItems, esmalteItems, engobeItems, tintaItems, biscoitoItems, queimaAltaItems,
+                )
+                const conjuntoUnitTotal = item.rows.reduce(
+                  (sum, r) => sum + linkQuantidade(conjuntoLinks, item.conjuntoId, r.id),
+                  0,
                 )
 
                 const conjHeaderBg = cdata.dirty ? CONJ_HEADER_ROW_DIRTY : CONJ_HEADER_ROW
@@ -5212,7 +5317,11 @@ export function PecasTable({
                           className={TABLE_ACTION_ADD}>
                           <span className="text-sm leading-none font-light">+</span>
                           <span>Peça</span>
-                          <span className="text-muted/50">({item.rows.length})</span>
+                          <span className="text-muted/50">
+                            ({conjuntoUnitTotal > item.rows.length
+                              ? `${conjuntoUnitTotal} un.`
+                              : item.rows.length})
+                          </span>
                         </button>
                       </div>
                     </td>
@@ -5224,6 +5333,9 @@ export function PecasTable({
               const row = item.row
               const activeConjuntoId = item.displayConjuntoId ?? row.conjunto_id
               const inConjunto = !!activeConjuntoId
+              const linkQty = inConjunto && activeConjuntoId
+                ? linkQuantidade(conjuntoLinks, activeConjuntoId, row.id)
+                : 1
               const conjuntoFenearte = inConjunto
                 ? (conjuntosData.get(activeConjuntoId!)?.fenearte ?? false)
                 : false
@@ -5322,7 +5434,17 @@ export function PecasTable({
                     />
                   </td>
                   <td className="px-2 py-2 min-w-0">
-                    <input type="text" value={row.nome} onChange={(e) => update(row.id, { nome: e.target.value })} placeholder="Nome" className={`${textInput} truncate`} />
+                    <div className="flex items-center gap-2 min-w-0">
+                      <input type="text" value={row.nome} onChange={(e) => update(row.id, { nome: e.target.value })} placeholder="Nome" className={`${textInput} truncate flex-1 min-w-0`} />
+                      {inConjunto && linkQty > 1 && (
+                        <span
+                          className="shrink-0 font-sans text-[9px] font-semibold uppercase tracking-wide text-terracota bg-terracota/10 border border-terracota/25 px-1.5 py-0.5"
+                          title="Quantidade desta peça neste conjunto"
+                        >
+                          {linkQty} un.
+                        </span>
+                      )}
+                    </div>
                   </td>
 
                   {/* Categoria */}
@@ -5685,6 +5807,11 @@ export function PecasTable({
           }}
           onRemovePiece={(id) => {
             if (editModalActiveConjuntoId) removePieceFromModal(id, editModalActiveConjuntoId)
+          }}
+          onUpdateLinkQuantidade={(pecaId, quantidade) => {
+            if (editModalActiveConjuntoId) {
+              setConjuntoPieceQuantidade(editModalActiveConjuntoId, pecaId, quantidade)
+            }
           }}
           lockConjunto={editModalLockedConjunto}
           conjuntoData={editModalActiveConjuntoId ? (conjuntosData.get(editModalActiveConjuntoId) ?? null) : null}

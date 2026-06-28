@@ -163,8 +163,11 @@ async function getConjuntoLinks(): Promise<ConjuntoPecaLink[]> {
     const supabase = await createClient()
     const { data } = await supabase
       .from('conjunto_pecas')
-      .select('conjunto_id, peca_id, ordem')
-    return (data ?? []) as ConjuntoPecaLink[]
+      .select('conjunto_id, peca_id, ordem, quantidade')
+    return (data ?? []).map((link) => ({
+      ...link,
+      quantidade: link.quantidade ?? 1,
+    })) as ConjuntoPecaLink[]
   } catch {
     return []
   }

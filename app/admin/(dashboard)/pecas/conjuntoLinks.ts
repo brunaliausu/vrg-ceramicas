@@ -4,6 +4,8 @@ export interface ConjuntoPecaLink {
   conjunto_id: string
   peca_id: string
   ordem: number
+  /** Unidades desta peça neste conjunto (padrão 1). */
+  quantidade?: number
 }
 
 export interface PecaConjuntoRowLike {
@@ -27,6 +29,7 @@ export function buildLinksFromRows(rows: PecaConjuntoRowLike[]): ConjuntoPecaLin
       conjunto_id: row.conjunto_id,
       peca_id: row.id,
       ordem: row.ordem ?? 0,
+      quantidade: 1,
     })
   }
   return links
@@ -113,14 +116,54 @@ export function getConjuntoPiecesFromRows<T extends PecaConjuntoRowLike>(
     )
 }
 
+export function linkQuantidade(
+  links: ConjuntoPecaLink[],
+  conjuntoId: string,
+  pecaId: string,
+): number {
+  const link = links.find((l) => l.conjunto_id === conjuntoId && l.peca_id === pecaId)
+  return Math.max(1, link?.quantidade ?? 1)
+}
+
+export function quantidadeMapForConjunto(
+  links: ConjuntoPecaLink[],
+  conjuntoId: string,
+): Map<string, number> {
+  const map = new Map<string, number>()
+  for (const link of links) {
+    if (link.conjunto_id === conjuntoId) {
+      map.set(link.peca_id, Math.max(1, link.quantidade ?? 1))
+    }
+  }
+  return map
+}
+
+export function updateLinkQuantidade(
+  links: ConjuntoPecaLink[],
+  conjuntoId: string,
+  pecaId: string,
+  quantidade: number,
+): ConjuntoPecaLink[] {
+  const q = Math.max(1, Math.floor(quantidade) || 1)
+  return links.map((l) =>
+    l.conjunto_id === conjuntoId && l.peca_id === pecaId
+      ? { ...l, quantidade: q }
+      : l,
+  )
+}
+
 export function linkRowsForConjunto(
   links: ConjuntoPecaLink[],
   conjuntoId: string,
-): { peca_id: string; ordem: number }[] {
+): { peca_id: string; ordem: number; quantidade: number }[] {
   return links
     .filter((l) => l.conjunto_id === conjuntoId)
     .sort((a, b) => a.ordem - b.ordem)
-    .map((l) => ({ peca_id: l.peca_id, ordem: l.ordem }))
+    .map((l) => ({
+      peca_id: l.peca_id,
+      ordem: l.ordem,
+      quantidade: Math.max(1, l.quantidade ?? 1),
+    }))
 }
 
 export function collectConjuntoIds(
@@ -140,11 +183,17 @@ export function addLink(
   conjuntoId: string,
   pecaId: string,
   ordem: number,
+  quantidade = 1,
 ): ConjuntoPecaLink[] {
   if (links.some((l) => l.conjunto_id === conjuntoId && l.peca_id === pecaId)) {
     return links
   }
-  return [...links, { conjunto_id: conjuntoId, peca_id: pecaId, ordem }]
+  return [...links, {
+    conjunto_id: conjuntoId,
+    peca_id: pecaId,
+    ordem,
+    quantidade: Math.max(1, quantidade),
+  }]
 }
 
 export function removeLink(

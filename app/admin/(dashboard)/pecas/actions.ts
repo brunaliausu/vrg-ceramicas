@@ -286,6 +286,7 @@ function slugify(nome: string, id: string): string {
 export interface ConjuntoPecaLinkPayload {
   peca_id: string
   ordem: number
+  quantidade: number
 }
 
 function isMissingTableError(message: string): boolean {
@@ -344,6 +345,7 @@ export async function syncConjuntoPecas(
         conjunto_id: conjuntoId,
         peca_id: l.peca_id,
         ordem: l.ordem,
+        quantidade: Math.max(1, l.quantidade ?? 1),
       }))
       const { error: insError } = await supabase.from('conjunto_pecas').insert(rows)
       if (insError && !isMissingTableError(insError.message)) {
