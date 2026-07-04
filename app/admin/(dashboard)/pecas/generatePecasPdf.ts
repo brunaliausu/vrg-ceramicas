@@ -1,5 +1,6 @@
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
+import { compareCodigoDisplay } from './codigoUtils'
 
 export type PdfColumnId =
   | 'codigo'
@@ -79,6 +80,18 @@ function imageFormat(dataUrl: string): 'PNG' | 'JPEG' | 'WEBP' {
   return 'JPEG'
 }
 
+function pdfCodigoSortKey(codigo: string): string {
+  return codigo === '—' ? '' : codigo
+}
+
+function sortPdfRows(rows: PecasPdfRow[]): PecasPdfRow[] {
+  return [...rows].sort((a, b) => {
+    const codigoCmp = compareCodigoDisplay(pdfCodigoSortKey(a.codigo), pdfCodigoSortKey(b.codigo))
+    if (codigoCmp !== 0) return codigoCmp
+    return a.nome.localeCompare(b.nome, 'pt-BR', { numeric: true, sensitivity: 'base' })
+  })
+}
+
 function buildColumnWidths(activeColumns: PdfColumnId[], tableWidth: number): number[] {
   const dataWeight = activeColumns.reduce((sum, id) => sum + (COLUMN_WEIGHTS[id] ?? 1), 0)
   const totalWeight = PHOTO_WEIGHT + dataWeight
@@ -93,13 +106,14 @@ function buildColumnWidths(activeColumns: PdfColumnId[], tableWidth: number): nu
 }
 
 export async function generatePecasPdf(rows: PecasPdfRow[], columns: PdfColumnId[]) {
+  const sortedRows = sortPdfRows(rows)
   const activeColumns = columns.length > 0 ? columns : DEFAULT_PDF_COLUMNS
   const dataLabels = activeColumns.map(
     (id) => PDF_COLUMN_DEFS.find((c) => c.id === id)?.label ?? id,
   )
   const labels = ['Foto', ...dataLabels]
 
-  const imageDataList = await Promise.all(rows.map((r) => resolveImageData(r.imageSrc)))
+  const imageDataList = await Promise.all(sortedRows.map((r) => resolveImageData(r.imageSrc)))
 
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
   const pageWidth = doc.internal.pageSize.getWidth()
@@ -126,10 +140,10 @@ export async function generatePecasPdf(rows: PecasPdfRow[], columns: PdfColumnId
   autoTable(doc, {
     startY: MARGIN.top,
     head: [labels],
-    body: rows.map((r) => ['', ...activeColumns.map((id) => r[id])]),
+    body: sortedRows.map((r) => ['', ...activeColumns.map((id) => r[id])]),
     tableWidth,
     styles: {
-      fontSize: 7,
+      fontSize: 10,
       cellPadding: 1.2,
       overflow: 'linebreak',
       minCellHeight: PHOTO_HEIGHT + 2,
@@ -138,7 +152,7 @@ export async function generatePecasPdf(rows: PecasPdfRow[], columns: PdfColumnId
       fillColor: [45, 42, 38],
       textColor: [250, 248, 243],
       fontStyle: 'bold',
-      fontSize: 7,
+      fontSize: 11,
       cellPadding: 1.4,
     },
     columnStyles,
@@ -147,10 +161,10 @@ export async function generatePecasPdf(rows: PecasPdfRow[], columns: PdfColumnId
     rowPageBreak: 'auto',
     didDrawPage: (data) => {
       doc.setFont('helvetica', 'normal')
-      doc.setFontSize(6)
+      doc.setFontSize(8)
       doc.setTextColor(120)
       doc.text(
-        `VRG Cerâmicas · Peças & Estoque · ${rows.length} item(ns) · ${generatedAt}`,
+        `VRG Cerâmicas · Peças & Estoque · ${sortedRows.length} item(ns) · ${generatedAt}`,
         MARGIN.left,
         pageHeight - 2,
       )

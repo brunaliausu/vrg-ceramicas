@@ -3491,9 +3491,21 @@ export function PecasTable({
     update(rowId, vendaFields)
   }
 
-  function openEditModal(id: string) {
+  function resolveModalActiveConjuntoId(
+    conjuntoContextId: string | null,
+    row: PecaRow | null | undefined,
+  ): string | null {
+    return conjuntoContextId ?? row?.conjunto_id ?? null
+  }
+
+  function openEditModal(id: string, conjuntoContextId?: string | null) {
     const target = rows.find((r) => r.id === id)
-    setEditModalLockedConjunto(!!target?.conjunto_id)
+    const contextId = conjuntoContextId ?? null
+    const inAnyConjunto = target
+      ? pecaHasAnyConjunto(target.id, target, conjuntoLinks)
+      : false
+    setEditModalConjuntoId(contextId)
+    setEditModalLockedConjunto(!!contextId || !!target?.conjunto_id || inAnyConjunto)
     setEditModal(id)
     clearPublicationFieldHighlights()
   }
@@ -3503,12 +3515,11 @@ export function PecasTable({
   }
 
   function openDeleteConjuntoConfirm(conjuntoId: string) {
-    const ref = rows.find((r) => r.conjunto_id === conjuntoId)
     setDeleteConfirm({
       type: 'conjunto',
       id: conjuntoId,
-      codigo: ref?.conjunto_codigo ?? '',
-      nome: ref?.conjunto_nome ?? '',
+      codigo: getConjuntoCodigo(conjuntoId),
+      nome: getConjuntoNome(conjuntoId),
     })
   }
 
@@ -3729,8 +3740,10 @@ export function PecasTable({
   }
 
   function openConjuntoEditModal(conjuntoId: string) {
-    const piece = rows.find((r) => r.conjunto_id === conjuntoId)
-    if (piece) openEditModal(piece.id)
+    const pieces = getConjuntoPiecesFromRows(rows, conjuntoId, conjuntoLinks)
+    const piece = pieces[0]
+    if (!piece) return
+    openEditModal(piece.id, conjuntoId)
   }
 
   function focusPublicationFieldsInModal(
@@ -4516,7 +4529,10 @@ export function PecasTable({
   async function handleDeleteConjunto(conjuntoId: string) {
     const updatedRows = await deleteConjuntoFromDb(conjuntoId, rows)
     setRows(updatedRows)
-    const editingInConjunto = editModal && rows.some((r) => r.id === editModal && r.conjunto_id === conjuntoId)
+    const editingInConjunto = editModal && (
+      editModalConjuntoId === conjuntoId
+      || rows.some((r) => r.id === editModal && pecaInConjunto(r.id, conjuntoId, r, conjuntoLinks))
+    )
     if (editingInConjunto) closeEditModal()
   }
 
@@ -4684,7 +4700,7 @@ export function PecasTable({
 
   async function persistEditModalSession(editRow: PecaRow, rowsSnapshot: PecaRow[] = rows) {
     const supabase = createClient()
-    const activeConjuntoId = editRow.conjunto_id ?? editModalConjuntoId
+    const activeConjuntoId = resolveModalActiveConjuntoId(editModalConjuntoId, editRow)
     if (activeConjuntoId) {
       const conjuntoId = activeConjuntoId
       const pieces = getConjuntoPiecesFromRows(rowsSnapshot, conjuntoId, conjuntoLinks)
@@ -4833,8 +4849,8 @@ export function PecasTable({
       }
     } else if (session?.kind === 'peca' && session.sourcePecaId) {
       modalScope = { pecaIds: [session.sourcePecaId, ...session.draftPecaIds] }
-    } else if (editRowModal.conjunto_id ?? editModalConjuntoId) {
-      const activeCid = editRowModal.conjunto_id ?? editModalConjuntoId!
+    } else if (resolveModalActiveConjuntoId(editModalConjuntoId, editRowModal)) {
+      const activeCid = resolveModalActiveConjuntoId(editModalConjuntoId, editRowModal)!
       modalScope = {
         pecaIds: getConjuntoPiecesFromRows(rows, activeCid, conjuntoLinks).map((r) => r.id),
         conjuntoIds: [activeCid],
@@ -4877,9 +4893,10 @@ export function PecasTable({
       }
 
       setSameCodeDuplicateSession(null)
+      const savedActiveConjuntoId = resolveModalActiveConjuntoId(editModalConjuntoId, editRowModal)
       setExibirSitePrompt(
-        (editRowModal.conjunto_id ?? editModalConjuntoId)
-          ? { type: 'conjunto', id: editRowModal.conjunto_id ?? editModalConjuntoId! }
+        savedActiveConjuntoId
+          ? { type: 'conjunto', id: savedActiveConjuntoId }
           : { type: 'peca', id: editRowModal.id },
       )
     } catch (err) {
@@ -4977,7 +4994,7 @@ export function PecasTable({
   const conjuntoRowModal = conjuntoModal ? rows.find((r) => r.id === conjuntoModal) ?? null : null
   const editRowModal = editModal ? rows.find((r) => r.id === editModal) ?? null : null
   const editModalActiveConjuntoId = editRowModal
-    ? (editRowModal.conjunto_id ?? editModalConjuntoId)
+    ? resolveModalActiveConjuntoId(editModalConjuntoId, editRowModal)
     : null
   return (
     <div className="flex flex-col flex-1 min-h-0 gap-2">
