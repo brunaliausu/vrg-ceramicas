@@ -19,6 +19,12 @@ export default async function OcultarSemFotoPage() {
         Os itens permanecem no estoque (admin) — somente saem da loja pública.
       </p>
 
+      <p className="font-sans text-xs text-carvao/55 mb-6 max-w-2xl">
+        Preferiu rodar no Supabase? Use o arquivo{' '}
+        <code className="bg-areia px-1 py-0.5">supabase-ocultar-sem-foto.sql</code>{' '}
+        (SQL Editor → colar → Run). Não exclui nada do estoque.
+      </p>
+
       {items.length > 0 ? (
         <div className="border border-pedra mb-6 max-h-[28rem] overflow-auto">
           <table className="w-full font-sans text-sm">
