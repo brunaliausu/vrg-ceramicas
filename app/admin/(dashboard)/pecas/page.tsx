@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { PecasTable } from './PecasTable'
+import { getAllColecoesAdmin } from '@/lib/colecoesSite'
 import type { ConjuntoPecaLink } from './conjuntoLinks'
 
 export interface CustoItem { nome: string; valor: number }
@@ -176,8 +177,8 @@ async function getConjuntoLinks(): Promise<ConjuntoPecaLink[]> {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default async function PecasPage() {
-  const [pecas, custos, conjuntos, conjuntoLinks] = await Promise.all([
-    getPecas(), getCustos(), getConjuntos(), getConjuntoLinks(),
+  const [pecas, custos, conjuntos, conjuntoLinks, colecoes] = await Promise.all([
+    getPecas(), getCustos(), getConjuntos(), getConjuntoLinks(), getAllColecoesAdmin(),
   ])
 
   const custoHoraFixo =
@@ -200,7 +201,8 @@ export default async function PecasPage() {
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
           <h1 className="font-serif text-2xl font-light text-carvao leading-tight">Peças & Estoque</h1>
           <p className="font-sans text-[11px] text-muted leading-snug">
-            Cadastre e gerencie as peças. Custos calculados automaticamente.
+            Cadastre e gerencie as peças. Custos calculados automaticamente.{' '}
+            <a href="/admin/colecoes" className="text-terracota hover:text-carvao">Coleções →</a>
           </p>
         </div>
       </div>
@@ -210,6 +212,7 @@ export default async function PecasPage() {
         pecasIniciais={pecas}
         conjuntosIniciais={conjuntos}
         conjuntoLinksIniciais={conjuntoLinks}
+        colecoesIniciais={colecoes}
         custoHoraFixo={custoHoraFixo}
         custoHoraMO={custoHoraMO}
         embalagemItems={embalagemItems}

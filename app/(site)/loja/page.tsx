@@ -3,6 +3,8 @@ import { ProductCard } from '@/components/product/ProductCard'
 import type { Produto, Categoria } from '@/types'
 import { CATEGORIAS } from '@/types'
 import { categoriasParaFiltroLoja } from '@/lib/categoriaLoja'
+import { getColecoesPublicas } from '@/lib/colecoesSite'
+import { colecaoHref } from '@/lib/colecaoUtils'
 
 interface SearchParams {
   categoria?: string
@@ -54,7 +56,14 @@ async function getProdutos(filtros: SearchParams): Promise<Produto[]> {
     }
 
     if (filtros.colecao) {
-      query = query.ilike('colecao', filtros.colecao.replace(/-/g, ' '))
+      const slug = filtros.colecao
+      const { data: colMeta } = await supabase
+        .from('colecoes')
+        .select('nome')
+        .eq('slug', slug)
+        .maybeSingle()
+      const term = colMeta?.nome ?? slug.replace(/-/g, ' ')
+      query = query.ilike('colecao', term)
     }
 
     const { data } = await query
@@ -74,19 +83,27 @@ async function getProdutos(filtros: SearchParams): Promise<Produto[]> {
 
 export default async function LojaPage({ searchParams }: Props) {
   const params = await searchParams
-  const produtos = await getProdutos(params)
+  const [produtos, colecoesSite] = await Promise.all([
+    getProdutos(params),
+    getColecoesPublicas(),
+  ])
 
   const categoriaAtiva = params.categoria as Categoria | undefined
   const colecaoAtiva = params.colecao
+  const colecaoAtivaMeta = colecaoAtiva
+    ? colecoesSite.find((c) => c.slug === colecaoAtiva) ?? null
+    : null
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-16">
       {/* Cabeçalho */}
       <div className="mb-12">
         <p className="font-sans text-[10px] tracking-[0.3em] uppercase text-terracota mb-2">
-          {colecaoAtiva
-            ? `Coleção ${colecaoAtiva.replace(/-/g, ' ')}`
-            : categoriaAtiva ?? 'Todas as peças'}
+          {colecaoAtivaMeta
+            ? colecaoAtivaMeta.site_titulo || colecaoAtivaMeta.nome
+            : colecaoAtiva
+              ? `Coleção ${colecaoAtiva.replace(/-/g, ' ')}`
+              : categoriaAtiva ?? 'Todas as peças'}
         </p>
         <h1 className="font-serif text-5xl font-light text-carvao">Loja</h1>
       </div>
@@ -108,7 +125,7 @@ export default async function LojaPage({ searchParams }: Props) {
             key={cat}
             href={`/loja?categoria=${encodeURIComponent(cat)}`}
             className={`font-sans text-xs tracking-wide px-4 py-2 border transition-colors ${
-              categoriaAtiva === cat
+              categoriaAtiva === cat && !colecaoAtiva
                 ? 'border-carvao bg-carvao text-cru'
                 : 'border-pedra text-carvao/60 hover:border-carvao hover:text-carvao'
             }`}
@@ -117,6 +134,25 @@ export default async function LojaPage({ searchParams }: Props) {
           </a>
         ))}
       </div>
+
+      {colecoesSite.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-10">
+          <span className="font-sans text-[10px] tracking-widest uppercase text-muted self-center mr-1">Coleções</span>
+          {colecoesSite.map((col) => (
+            <a
+              key={col.id}
+              href={colecaoHref(col.slug)}
+              className={`font-sans text-xs tracking-wide px-4 py-2 border transition-colors ${
+                colecaoAtiva === col.slug
+                  ? 'border-terracota bg-terracota text-cru'
+                  : 'border-pedra text-carvao/60 hover:border-terracota hover:text-carvao'
+              }`}
+            >
+              {col.nome}
+            </a>
+          ))}
+        </div>
+      )}
 
       {/* Grade de produtos */}
       {produtos.length === 0 ? (

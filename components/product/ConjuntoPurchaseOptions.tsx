@@ -12,6 +12,7 @@ export interface ConjuntoPecaSite {
   dimensoes: string | null
   fotos: string[] | null
   status: string | null
+  preco_praticado: number | null
   preco_venda: number | null
 }
 
@@ -77,7 +78,9 @@ export function ConjuntoPurchaseOptions({
                 const status = peca.status ?? ''
                 const statusLabel = STATUS_LABEL[status] ?? status
                 const disponivel = status === 'disponivel'
-                const preco = peca.preco_venda
+                const preco = (peca.preco_praticado != null && peca.preco_praticado > 0)
+                  ? peca.preco_praticado
+                  : peca.preco_venda
 
                 return (
                   <div key={peca.id} className="flex gap-4 px-4 py-4 items-center">

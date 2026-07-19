@@ -61,7 +61,7 @@ async function getConjuntoPieces(conjuntoId: string) {
       const ids = links.map((l) => l.peca_id)
       const { data: pecas } = await supabase
         .from('pecas_estoque')
-        .select('id, codigo, nome, dimensoes, fotos, status, preco_venda')
+        .select('id, codigo, nome, dimensoes, fotos, status, preco_praticado, preco_venda')
         .in('id', ids)
       const orderMap = new Map(links.map((l) => [l.peca_id, l.ordem]))
       return (pecas ?? []).sort(
@@ -71,7 +71,7 @@ async function getConjuntoPieces(conjuntoId: string) {
 
     const { data } = await supabase
       .from('pecas_estoque')
-      .select('id, codigo, nome, dimensoes, fotos, status, preco_venda')
+      .select('id, codigo, nome, dimensoes, fotos, status, preco_praticado, preco_venda')
       .eq('conjunto_id', conjuntoId)
       .order('ordem', { ascending: true })
     return data ?? []

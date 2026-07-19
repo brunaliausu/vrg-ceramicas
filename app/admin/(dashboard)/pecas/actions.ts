@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { normalizeCategoriaLoja, categoriaParaTabelaProdutos } from '@/lib/categoriaLoja'
 import { revalidatePath } from 'next/cache'
 import { requireAdminOrNull } from '@/lib/auth/require-admin'
+import { resolverColecaoNome } from './colecoesActions'
 
 export interface PecaPayload {
   id: string
@@ -36,6 +37,7 @@ export interface PecaPayload {
   conjunto_id: string | null
   conjunto_codigo: string | null
   conjunto_nome: string | null
+  colecao_id: string | null
   valor_venda: number | null
   local_venda: string | null
   cliente_nome: string | null
@@ -61,6 +63,7 @@ export interface ConjuntoPayload {
   preco_total: number | null
   peso_total: number | null
   venda_modo: string
+  colecao_id: string | null
 }
 
 export interface ActionResult {
@@ -92,6 +95,13 @@ function formatDbError(message: string): string {
 }
 
 type SupabaseClient = Awaited<ReturnType<typeof createClient>>
+
+/** Preço exibido na loja: praticado quando definido, senão sugerido. */
+function precoParaLoja(precoPraticado: number | null, precoSugerido: number | null): number | null {
+  if (precoPraticado != null && precoPraticado > 0) return precoPraticado
+  if (precoSugerido != null && precoSugerido > 0) return precoSugerido
+  return null
+}
 
 function buildPecaEstoqueRow(
   peca: PecaPayload,
@@ -128,6 +138,7 @@ function buildPecaEstoqueRow(
     conjunto_id:      peca.conjunto_id      || null,
     conjunto_codigo:  peca.conjunto_codigo  || null,
     conjunto_nome:    peca.conjunto_nome    || null,
+    colecao_id:       peca.colecao_id || null,
   }
   if (includePricing) {
     row.margem_venda = peca.margem_venda
@@ -388,6 +399,7 @@ export async function salvarPeca(peca: PecaPayload): Promise<ActionResult> {
       await supabase.from('produtos').delete().eq('id', peca.id)
     } else if (peca.exibir_no_site) {
       const statusLoja = STATUS_LOJA[peca.status] ?? 'Disponível'
+      const colecaoNome = await resolverColecaoNome(supabase, peca.colecao_id)
       const { error: errProd } = await supabase
         .from('produtos')
         .upsert({
@@ -396,13 +408,14 @@ export async function salvarPeca(peca: PecaPayload): Promise<ActionResult> {
           slug:            slugify(peca.nome || 'peca', peca.id),
           categoria:       categoriaParaTabelaProdutos(peca.categoria),
           descricao:       peca.descricao        || null,
-          preco:           peca.preco_venda,
+          preco:           precoParaLoja(peca.preco_praticado, peca.preco_venda),
           status:          statusLoja,
           aceita_encomenda: peca.status === 'sob_encomenda',
           medidas:         peca.dimensoes        || null,
           peso:            peca.peso != null ? Math.round(peca.peso) : null,
           imagens:         peca.fotos,
           destaque_home:   destaqueHome,
+          colecao:         colecaoNome,
         })
       if (errProd) return { ok: false, error: formatDbError(`Loja: ${errProd.message}`) }
     } else {
@@ -448,6 +461,7 @@ export async function salvarConjunto(conjunto: ConjuntoPayload): Promise<ActionR
     // Sincronizar loja apenas com dados do conjunto (fotos, nome, descrição, preço, etc.)
     if (conjunto.exibir_no_site) {
       const statusLoja = STATUS_LOJA[conjunto.status] ?? 'Disponível'
+      const colecaoNome = await resolverColecaoNome(supabase, conjunto.colecao_id)
       const { error: errProd } = await supabase
         .from('produtos')
         .upsert({
@@ -456,12 +470,13 @@ export async function salvarConjunto(conjunto: ConjuntoPayload): Promise<ActionR
           slug:             slugify(conjunto.nome || conjunto.codigo || 'conjunto', conjunto.id),
           categoria:        categoriaParaTabelaProdutos('Conjuntos'),
           descricao:        conjunto.descricao || null,
-          preco:            conjunto.preco_venda,
+          preco:            precoParaLoja(conjunto.preco_praticado, conjunto.preco_venda),
           status:           statusLoja,
           aceita_encomenda: conjunto.status === 'sob_encomenda',
           peso:             conjunto.peso_total != null ? Math.round(conjunto.peso_total) : null,
           imagens:          conjunto.fotos,
           destaque_home:    destaqueHome,
+          colecao:          colecaoNome,
         })
       if (errProd) return { ok: false, error: formatDbError(`Loja: ${errProd.message}`) }
     } else {

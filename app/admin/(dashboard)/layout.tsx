@@ -38,6 +38,12 @@ export default async function AdminLayout({ children }: { children: React.ReactN
               Custos
             </Link>
             <Link
+              href="/admin/colecoes"
+              className="font-sans text-xs text-cru/60 hover:text-cru transition-colors"
+            >
+              Coleções
+            </Link>
+            <Link
               href="/admin/conteudo"
               className="font-sans text-xs text-cru/60 hover:text-cru transition-colors"
             >

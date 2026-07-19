@@ -23,6 +23,9 @@ import { salvarPeca, salvarConjunto, deletarPeca, deletarConjunto, syncConjuntoP
 import type { CustoItem, ConjuntoDB } from './page'
 import { VendaModal, type VendaFormData } from './VendaModal'
 import { generatePecasPdf, type PecasPdfRow, type PdfColumnId } from './generatePecasPdf'
+import { PecasTableFilter, tableViewFilterLabel, type TableViewFilter } from './PecasTableFilter'
+import { ColecaoPieceSelector } from '@/components/admin/ColecaoPieceSelector'
+import type { ColecaoDB } from '@/lib/colecaoUtils'
 import { PecasPdfModal } from './PecasPdfModal'
 import { SelecionarAvulsasModal } from './SelecionarAvulsasModal'
 import { FormarConjuntoModal } from './FormarConjuntoModal'
@@ -240,6 +243,7 @@ interface PecaDB {
   cliente_telefone: string | null
   cliente_email: string | null
   vendido_em: string | null
+  colecao_id: string | null
 }
 
 interface PendingFoto { file: File; preview: string }
@@ -287,6 +291,7 @@ interface PecaRow {
   cliente_telefone: string
   cliente_email: string
   vendido_em: string | null
+  colecao_id: string | null
 }
 
 interface SameCodeDuplicateSession {
@@ -337,6 +342,7 @@ interface Props {
   pecasIniciais: PecaDB[]
   conjuntosIniciais: ConjuntoDB[]
   conjuntoLinksIniciais: ConjuntoPecaLink[]
+  colecoesIniciais: ColecaoDB[]
   custoHoraFixo: number
   custoHoraMO: number
   embalagemItems: CustoItem[]
@@ -419,6 +425,46 @@ function isDisplayItemFenearteVisible(item: DisplayItem, conjuntosData: Map<stri
     return conjuntosData.get(activeConjuntoId)?.fenearte ?? false
   }
   return item.row.fenearte
+}
+
+function displayItemStatus(
+  item: DisplayItem,
+  conjuntosData: Map<string, ConjuntoData>,
+): string {
+  if (item.type === 'conjunto-header') {
+    return conjuntosData.get(item.conjuntoId)?.status ?? ''
+  }
+  const activeConjuntoId = item.displayConjuntoId ?? item.row.conjunto_id
+  if (activeConjuntoId) {
+    return conjuntosData.get(activeConjuntoId)?.status ?? item.row.status ?? ''
+  }
+  return item.row.status ?? ''
+}
+
+/** Peça avulsa ou conjunto com exibir no site ativo (inclui filhas do conjunto). */
+function isDisplayItemOnSiteVisible(item: DisplayItem, conjuntosData: Map<string, ConjuntoData>): boolean {
+  if (item.type === 'conjunto-header') {
+    return conjuntosData.get(item.conjuntoId)?.exibir_no_site ?? false
+  }
+  const activeConjuntoId = item.displayConjuntoId ?? item.row.conjunto_id
+  if (activeConjuntoId) {
+    return conjuntosData.get(activeConjuntoId)?.exibir_no_site ?? false
+  }
+  return item.row.exibir_no_site
+}
+
+function matchesTableViewFilter(
+  item: DisplayItem,
+  filter: TableViewFilter,
+  conjuntosData: Map<string, ConjuntoData>,
+): boolean {
+  if (filter === 'all') return true
+  if (filter === 'feira') return isDisplayItemFenearteVisible(item, conjuntosData)
+  if (filter === 'site') return isDisplayItemOnSiteVisible(item, conjuntosData)
+  if (filter.startsWith('status:')) {
+    return displayItemStatus(item, conjuntosData) === filter.slice('status:'.length)
+  }
+  return true
 }
 
 function fmtPrecoPdf(value: number): string {
@@ -875,6 +921,7 @@ function dbToRow(p: PecaDB): PecaRow {
     cliente_telefone: p.cliente_telefone ?? '',
     cliente_email:   p.cliente_email ?? '',
     vendido_em:      p.vendido_em ?? null,
+    colecao_id:      p.colecao_id ?? null,
   }
 }
 
@@ -895,6 +942,7 @@ function emptyRow(conjuntoId?: string, conjuntoCodigo?: string, conjuntoNome?: s
     conjunto_id:     conjuntoId     ?? null,
     conjunto_codigo: conjuntoCodigo ?? '',
     conjunto_nome:   conjuntoNome   ?? '',
+    colecao_id: null,
     ...EMPTY_VENDA,
   }
 }
@@ -1862,6 +1910,7 @@ const MODAL_LBL = 'font-sans text-[9px] tracking-widest uppercase text-muted blo
 
 function PecaModalPieceFields({
   piece, index, inConjunto, canRemove, highlighted, statusValue, codigoError, highlightPublicationFields, quantidade = 1, onQuantidadeChange, onUpdate, onCategoriaChange, onCodigoChange, onCodigoCommit, onStatusChange, onOpenFotos, onPreviewFoto, onAddFotos, onRemove,
+  colecoes, onColecoesChange,
   margemVendaConfig,
   custoHoraFixo, custoHoraMO,
   embalagemItems, argilaItems, esmalteItems, engobeItems, tintaItems, biscoitoItems, queimaAltaItems,
@@ -1885,6 +1934,8 @@ function PecaModalPieceFields({
   onPreviewFoto: () => void
   onAddFotos: (files: FileList) => void
   onRemove?: () => void
+  colecoes?: ColecaoDB[]
+  onColecoesChange?: (colecoes: ColecaoDB[]) => void
   margemVendaConfig: number
   custoHoraFixo: number
   custoHoraMO: number
@@ -2118,15 +2169,25 @@ function PecaModalPieceFields({
       </div>
 
       {inConjunto && (
-        <div>
-          <label className={MODAL_LBL}>Custo extra desta peça (R$)</label>
-          <input type="number" min="0" step="0.01" value={piece.custo_extra} onChange={(e) => onUpdate({ custo_extra: e.target.value })} placeholder="0" className={MODAL_INP_NUM} />
-          {quantidade > 1 && custoTotal > 0 && (
-            <p className="font-sans text-[9px] text-muted/70 mt-1.5 text-right tabular-nums">
-              No conjunto: {quantidade} un. × R$ {fmt(custoTotal)} = R$ {fmt(custoTotal * quantidade)}
-            </p>
+        <>
+          <div>
+            <label className={MODAL_LBL}>Custo extra desta peça (R$)</label>
+            <input type="number" min="0" step="0.01" value={piece.custo_extra} onChange={(e) => onUpdate({ custo_extra: e.target.value })} placeholder="0" className={MODAL_INP_NUM} />
+            {quantidade > 1 && custoTotal > 0 && (
+              <p className="font-sans text-[9px] text-muted/70 mt-1.5 text-right tabular-nums">
+                No conjunto: {quantidade} un. × R$ {fmt(custoTotal)} = R$ {fmt(custoTotal * quantidade)}
+              </p>
+            )}
+          </div>
+          {colecoes && onColecoesChange && (
+            <ColecaoPieceSelector
+              value={piece.colecao_id}
+              onChange={(colecaoId) => onUpdate({ colecao_id: colecaoId })}
+              colecoes={colecoes}
+              onColecoesChange={onColecoesChange}
+            />
           )}
-        </div>
+        </>
       )}
 
       {!inConjunto && (
@@ -2219,6 +2280,8 @@ function PecaDetalhesModal({
   pecaCodigoErrors,
   highlightPublicationFields,
   publicationFocusPieceId,
+  colecoes,
+  onColecoesChange,
   margemVendaConfig,
   custoHoraFixo, custoHoraMO,
   embalagemItems, argilaItems, esmalteItems, engobeItems, tintaItems, biscoitoItems, queimaAltaItems,
@@ -2267,6 +2330,8 @@ function PecaDetalhesModal({
   pecaCodigoErrors: Record<string, string>
   highlightPublicationFields: PublicationFieldKey[]
   publicationFocusPieceId: string | null
+  colecoes: ColecaoDB[]
+  onColecoesChange: (colecoes: ColecaoDB[]) => void
   margemVendaConfig: number
   custoHoraFixo: number
   custoHoraMO: number
@@ -2556,6 +2621,8 @@ function PecaDetalhesModal({
                   onPreviewFoto={() => onPreviewPieceFotos(piece.id)}
                   onAddFotos={(files) => onAddPieceFotos(piece.id, files)}
                   onRemove={() => onRemovePiece(piece.id)}
+                  colecoes={colecoes}
+                  onColecoesChange={onColecoesChange}
                   margemVendaConfig={margemVendaConfig}
                   custoHoraFixo={custoHoraFixo}
                   custoHoraMO={custoHoraMO}
@@ -2666,7 +2733,7 @@ function PecaDetalhesModal({
           {showSinglePieceForm && (showStandalonePublication || showEditPublication) && (
             <section>
               <ModalSectionTitle>Publicação no site</ModalSectionTitle>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
                 <div>
                   <label className={MODAL_LBL}>Status</label>
                   <select value={pendingVendaRowId === row.id ? 'vendido' : row.status} onChange={(e) => onStatusChangePiece(row.id, e.target.value)} className={MODAL_SEL_FULL}>
@@ -2682,6 +2749,12 @@ function PecaDetalhesModal({
                   </div>
                 </div>
               </div>
+              <ColecaoPieceSelector
+                value={row.colecao_id}
+                onChange={(colecaoId) => onUpdatePiece(row.id, { colecao_id: colecaoId })}
+                colecoes={colecoes}
+                onColecoesChange={onColecoesChange}
+              />
             </section>
           )}
 
@@ -2780,11 +2853,13 @@ function PecaDetalhesModal({
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function PecasTable({
-  pecasIniciais, conjuntosIniciais, conjuntoLinksIniciais, custoHoraFixo, custoHoraMO,
+  pecasIniciais, conjuntosIniciais, conjuntoLinksIniciais, colecoesIniciais,
+  custoHoraFixo, custoHoraMO,
   embalagemItems, argilaItems, esmalteItems, engobeItems, tintaItems,
   biscoitoItems, queimaAltaItems, margemVendaConfig,
 }: Props) {
   const [rows, setRows] = useState<PecaRow[]>(() => pecasIniciais.map(dbToRow))
+  const [colecoes, setColecoes] = useState<ColecaoDB[]>(() => colecoesIniciais)
   const [conjuntoLinks, setConjuntoLinks] = useState<ConjuntoPecaLink[]>(() =>
     mergeLinksWithRows(conjuntoLinksIniciais, pecasIniciais.map(dbToRow)),
   )
@@ -2845,7 +2920,7 @@ export function PecasTable({
   const [pendingConjuntoVendaId, setPendingConjuntoVendaId] = useState<string | null>(null)
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set())
   const [pdfError, setPdfError] = useState<string | null>(null)
-  const [pdfSelectionMode, setPdfSelectionMode] = useState<'all' | 'feira'>('all')
+  const [tableViewFilter, setTableViewFilter] = useState<TableViewFilter>('all')
   const [pdfModalOpen, setPdfModalOpen] = useState(false)
   const [avulsasPicker, setAvulsasPicker] = useState<{ conjuntoId: string } | null>(null)
   const [formConjuntoModal, setFormConjuntoModal] = useState<{ rowIds: string[] } | null>(null)
@@ -2943,9 +3018,9 @@ export function PecasTable({
     [filteredRows, conjuntoLinks, conjuntoMetaById],
   )
   const tableDisplayItems = useMemo(() => {
-    if (pdfSelectionMode !== 'feira') return displayItems
-    return displayItems.filter((item) => isDisplayItemFenearteVisible(item, conjuntosData))
-  }, [displayItems, pdfSelectionMode, conjuntosData])
+    if (tableViewFilter === 'all') return displayItems
+    return displayItems.filter((item) => matchesTableViewFilter(item, tableViewFilter, conjuntosData))
+  }, [displayItems, tableViewFilter, conjuntosData])
   const selectableKeysForMode = useMemo(
     () => tableDisplayItems.map(displayItemKey),
     [tableDisplayItems],
@@ -3018,7 +3093,7 @@ export function PecasTable({
   )
 
   useEffect(() => {
-    if (pdfSelectionMode !== 'feira') return
+    if (tableViewFilter === 'all') return
     setSelectedKeys((prev) => {
       const allowed = new Set(tableDisplayItems.map(displayItemKey))
       const next = new Set<string>()
@@ -3028,7 +3103,7 @@ export function PecasTable({
       if (next.size === prev.size && [...next].every((k) => prev.has(k))) return prev
       return next
     })
-  }, [pdfSelectionMode, tableDisplayItems])
+  }, [tableViewFilter, tableDisplayItems])
 
   function toggleSelectKey(key: string) {
     setSelectedKeys((prev) => {
@@ -4641,6 +4716,7 @@ export function PecasTable({
       conjunto_id: row.conjunto_id,
       conjunto_codigo: row.conjunto_codigo || null,
       conjunto_nome:   row.conjunto_nome   || null,
+      colecao_id: row.colecao_id,
       valor_venda: row.status === 'vendido' && row.valor_venda !== ''
         ? parseFloat(row.valor_venda) || null
         : null,
@@ -4674,6 +4750,7 @@ export function PecasTable({
       ? parseFloat(cdata.preco_praticado) || null
       : (pricing.precoSugerido > 0 ? pricing.precoSugerido : null)
     const refRow = conjuntoRows[0]
+    const colecaoId = conjuntoRows.find((r) => r.colecao_id)?.colecao_id ?? null
     const result = await salvarConjunto({
       id: conjuntoId,
       codigo: cdata.codigo || refRow?.conjunto_codigo || '',
@@ -4691,6 +4768,7 @@ export function PecasTable({
       preco_total: pricing.precoSugerido > 0 ? pricing.precoSugerido : null,
       peso_total: pesoGramsFromArgilaKg(pricing.totalArgilaKg),
       venda_modo: cdata.venda_modo || 'apenas_conjunto',
+      colecao_id: colecaoId,
     })
     if (!result.ok) throw new Error(result.error ?? 'Erro ao salvar conjunto')
     if (result.warning) setMigrationWarning(result.warning)
@@ -5099,31 +5177,13 @@ export function PecasTable({
         >
           Excluir selecionados ({bulkDeletionPlan.pecaCount})
         </button>
-        <div className="flex flex-wrap items-center gap-2 border border-pedra/60 px-2 py-1 bg-cru/20">
-          <span className="font-sans text-[8px] tracking-widest uppercase text-muted shrink-0">Seleção</span>
-          <label className="flex items-center gap-1 font-sans text-[11px] text-carvao cursor-pointer select-none">
-            <input
-              type="radio"
-              name="pdf-selection-mode"
-              checked={pdfSelectionMode === 'all'}
-              onChange={() => setPdfSelectionMode('all')}
-              className="accent-carvao"
-            />
-            Todas as peças
-          </label>
-          <label className="flex items-center gap-1 font-sans text-[11px] text-carvao cursor-pointer select-none">
-            <input
-              type="radio"
-              name="pdf-selection-mode"
-              checked={pdfSelectionMode === 'feira'}
-              onChange={() => setPdfSelectionMode('feira')}
-              className="accent-carvao"
-            />
-            Apenas feira
-          </label>
-        </div>
+        <PecasTableFilter
+          value={tableViewFilter}
+          onChange={setTableViewFilter}
+          visibleCount={tableDisplayItems.length}
+        />
         <span className="font-sans text-[11px] text-muted">
-          {selectedPdfCount} de {selectableKeysForMode.length} selecionado(s)
+          {tableDisplayItems.length} visível(is) · {selectedPdfCount} selecionado(s)
         </span>
       </div>
 
@@ -5576,6 +5636,14 @@ export function PecasTable({
             <p className="font-sans text-sm text-muted">Nenhuma peça encontrada para &ldquo;{searchQuery}&rdquo;</p>
           </div>
         )}
+
+        {rows.length > 0 && !searchQuery.trim() && tableViewFilter !== 'all' && tableDisplayItems.length === 0 && (
+          <div className="py-12 text-center">
+            <p className="font-sans text-sm text-muted">
+              Nenhum item para o filtro &ldquo;{tableViewFilterLabel(tableViewFilter)}&rdquo;.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* ── Bottom bar (fixa) ─────────────────────────────────────────────────── */}
@@ -5869,6 +5937,8 @@ export function PecasTable({
           onScrollToPieceDone={() => setScrollToPieceId(null)}
           highlightPublicationFields={highlightPublicationFields}
           publicationFocusPieceId={publicationFocusPieceId}
+          colecoes={colecoes}
+          onColecoesChange={setColecoes}
           margemVendaConfig={margemVendaConfig}
           custoHoraFixo={custoHoraFixo}
           custoHoraMO={custoHoraMO}
