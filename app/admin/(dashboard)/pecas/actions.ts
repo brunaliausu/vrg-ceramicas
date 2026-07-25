@@ -5,6 +5,7 @@ import { normalizeCategoriaLoja, categoriaParaTabelaProdutos } from '@/lib/categ
 import { revalidatePath } from 'next/cache'
 import { requireAdminOrNull } from '@/lib/auth/require-admin'
 import { resolverColecaoNome } from './colecoesActions'
+import { PUBLICACAO_SEM_FOTO_MSG, temFotos } from '@/lib/sem-foto-utils'
 
 export interface PecaPayload {
   id: string
@@ -380,6 +381,9 @@ export async function salvarPeca(peca: PecaPayload): Promise<ActionResult> {
     const supabase = auth.supabase
 
     const emConjunto = !!peca.conjunto_id
+    if (!emConjunto && peca.exibir_no_site && !temFotos(peca.fotos)) {
+      return { ok: false, error: PUBLICACAO_SEM_FOTO_MSG }
+    }
     const destaqueHome = !emConjunto && peca.exibir_no_site && peca.destaque_home
 
     const destaqueErr = await validateDestaqueLimit(
@@ -442,6 +446,9 @@ export async function salvarConjunto(conjunto: ConjuntoPayload): Promise<ActionR
   try {
     const supabase = auth.supabase
 
+    if (conjunto.exibir_no_site && !temFotos(conjunto.fotos)) {
+      return { ok: false, error: PUBLICACAO_SEM_FOTO_MSG }
+    }
     const destaqueHome = conjunto.exibir_no_site && conjunto.destaque_home
 
     const destaqueErr = await validateDestaqueLimit(

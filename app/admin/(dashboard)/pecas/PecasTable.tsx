@@ -26,6 +26,7 @@ import { generatePecasPdf, type PecasPdfRow, type PdfColumnId } from './generate
 import { PecasTableFilter, tableViewFilterLabel, type TableViewFilter } from './PecasTableFilter'
 import { ColecaoPieceSelector } from '@/components/admin/ColecaoPieceSelector'
 import type { ColecaoDB } from '@/lib/colecaoUtils'
+import { PUBLICACAO_SEM_FOTO_MSG, temFotoParaPublicar } from '@/lib/sem-foto-utils'
 import { PecasPdfModal } from './PecasPdfModal'
 import { SelecionarAvulsasModal } from './SelecionarAvulsasModal'
 import { FormarConjuntoModal } from './FormarConjuntoModal'
@@ -1847,30 +1848,73 @@ function PublicationWarningModal({
   onProceed: () => void
   onCancel: () => void
 }) {
+  const semFoto = missingFields.includes('foto')
+  const outrosCampos = missingFields.filter((f) => f !== 'foto')
+
   return (
     <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/50 p-4" onMouseDown={onCancel}>
       <div className="bg-white border border-pedra shadow-2xl w-full max-w-md p-6" onMouseDown={(e) => e.stopPropagation()}>
-        <h2 className="font-serif text-xl text-carvao mb-2">Informações incompletas</h2>
-        <p className="font-sans text-sm text-carvao/80 mb-3">
-          Para exibir no site, os campos principais devem estar cadastrados. Os seguintes campos não foram preenchidos:
+        <h2 className="font-serif text-xl text-carvao mb-2">
+          {semFoto && outrosCampos.length === 0 ? 'Foto obrigatória' : 'Informações incompletas'}
+        </h2>
+        {semFoto && (
+          <p className="font-sans text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 mb-3">
+            {PUBLICACAO_SEM_FOTO_MSG}
+          </p>
+        )}
+        {outrosCampos.length > 0 && (
+          <>
+            <p className="font-sans text-sm text-carvao/80 mb-3">
+              Para exibir no site, os campos principais devem estar cadastrados. Os seguintes campos não foram preenchidos:
+            </p>
+            <ul className="font-sans text-sm text-carvao mb-4 list-disc pl-5 space-y-1">
+              {outrosCampos.map((field) => <li key={field}>{PUBLICATION_FIELD_LABELS[field]}</li>)}
+            </ul>
+          </>
+        )}
+        <p className="font-sans text-sm text-muted mb-5">
+          {semFoto ? 'Adicione ao menos uma foto antes de publicar.' : 'Deseja ajustar o cadastro antes de publicar?'}
         </p>
-        <ul className="font-sans text-sm text-carvao mb-4 list-disc pl-5 space-y-1">
-          {missingFields.map((field) => <li key={field}>{PUBLICATION_FIELD_LABELS[field]}</li>)}
-        </ul>
-        <p className="font-sans text-sm text-muted mb-5">Deseja ajustar o cadastro antes de publicar?</p>
         <div className="flex flex-col sm:flex-row gap-2 sm:justify-end">
           <button type="button" onClick={onCancel}
             className="font-sans text-xs text-muted hover:text-carvao px-4 py-2 border border-pedra hover:bg-areia/50 transition-colors">
-            Cancelar
+            {semFoto ? 'Fechar' : 'Cancelar'}
           </button>
-          <button type="button" onClick={onProceed}
-            className="font-sans text-xs text-carvao px-4 py-2 border border-pedra hover:bg-areia/50 transition-colors">
-            Seguir assim mesmo
-          </button>
+          {!semFoto && (
+            <button type="button" onClick={onProceed}
+              className="font-sans text-xs text-carvao px-4 py-2 border border-pedra hover:bg-areia/50 transition-colors">
+              Seguir assim mesmo
+            </button>
+          )}
           <button type="button" onClick={onAdjust}
             className="font-sans text-xs bg-carvao text-cru px-4 py-2 hover:bg-carvao/85 transition-colors">
-            Sim, ajustar
+            {semFoto ? 'Adicionar foto' : 'Sim, ajustar'}
           </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function SemFotoPublicacaoModal({ onClose, onAdjust }: { onClose: () => void; onAdjust?: () => void }) {
+  return (
+    <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/50 p-4" onMouseDown={onClose}>
+      <div className="bg-white border border-pedra shadow-2xl w-full max-w-md p-6" onMouseDown={(e) => e.stopPropagation()}>
+        <h2 className="font-serif text-xl text-carvao mb-2">Publicação não permitida</h2>
+        <p className="font-sans text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-2 mb-5">
+          {PUBLICACAO_SEM_FOTO_MSG}
+        </p>
+        <div className="flex flex-col sm:flex-row gap-2 sm:justify-end">
+          <button type="button" onClick={onClose}
+            className="font-sans text-xs text-muted hover:text-carvao px-4 py-2 border border-pedra hover:bg-areia/50 transition-colors">
+            Fechar
+          </button>
+          {onAdjust && (
+            <button type="button" onClick={onAdjust}
+              className="font-sans text-xs bg-carvao text-cru px-4 py-2 hover:bg-carvao/85 transition-colors">
+              Adicionar foto
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -2900,6 +2944,9 @@ export function PecasTable({
   const [saveStatus, setSaveStatus] = useState<'idle' | 'ok' | 'error'>('idle')
   const [saveError, setSaveError] = useState<string | null>(null)
   const [destaqueLimitMsg, setDestaqueLimitMsg] = useState<string | null>(null)
+  const [semFotoPublicacao, setSemFotoPublicacao] = useState<
+    { type: 'peca'; id: string } | { type: 'conjunto'; id: string } | null
+  >(null)
   const [publicationWarning, setPublicationWarning] = useState<{
     missingFields: PublicationFieldKey[]
     onAdjust: () => void
@@ -3928,6 +3975,51 @@ export function PecasTable({
     updateConjuntoData(conjuntoId, { destaque_home: true })
   }
 
+  function pecaTemFoto(row: PecaRow) {
+    return temFotoParaPublicar(row.fotos, row.fotosNovas.length)
+  }
+
+  function conjuntoTemFoto(cdata: ConjuntoData) {
+    return temFotoParaPublicar(cdata.fotos, cdata.fotosNovas.length)
+  }
+
+  function openSemFotoPublicacao(target: { type: 'peca'; id: string } | { type: 'conjunto'; id: string }) {
+    setSemFotoPublicacao(target)
+  }
+
+  function focusFotoFieldForPublicacao(target: { type: 'peca'; id: string } | { type: 'conjunto'; id: string }) {
+    setSemFotoPublicacao(null)
+    if (target.type === 'peca') {
+      if (editModal !== target.id) openEditModal(target.id)
+      setHighlightPublicationFields(['foto'])
+      setPublicationFocusPieceId(target.id)
+      requestAnimationFrame(() => {
+        document.getElementById('modal-field-peca-foto')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      })
+      return
+    }
+    const piece = getConjuntoPiecesFromRows(rows, target.id, conjuntoLinks)[0]
+    if (piece) {
+      if (editModal !== piece.id) openConjuntoEditModal(target.id)
+      setHighlightPublicationFields(['foto'])
+      setPublicationFocusPieceId(null)
+      requestAnimationFrame(() => {
+        document.getElementById('modal-field-conjunto-foto')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      })
+    }
+  }
+
+  function validateExibirNoSiteFotoBeforeSave(): string | null {
+    for (const row of rows) {
+      if (row.conjunto_id) continue
+      if (row.exibir_no_site && !pecaTemFoto(row)) return PUBLICACAO_SEM_FOTO_MSG
+    }
+    for (const cdata of conjuntosData.values()) {
+      if (cdata.exibir_no_site && !conjuntoTemFoto(cdata)) return PUBLICACAO_SEM_FOTO_MSG
+    }
+    return null
+  }
+
   function applyExibirPeca(id: string, value: boolean) {
     const row = rows.find((r) => r.id === id)
     if (!row) return
@@ -3950,6 +4042,11 @@ export function PecasTable({
       return
     }
 
+    if (!pecaTemFoto(row)) {
+      openSemFotoPublicacao({ type: 'peca', id })
+      return
+    }
+
     const { custoTotal } = calcRowCosts(
       row, custoHoraMO, custoHoraFixo,
       embalagemItems, argilaItems, esmalteItems, engobeItems, tintaItems, biscoitoItems, queimaAltaItems,
@@ -3967,6 +4064,7 @@ export function PecasTable({
         focusPublicationFieldsInModal(id, missing, editModal === id)
       },
       onProceed: () => {
+        if (missing.fields.includes('foto')) return
         setPublicationWarning(null)
         clearPublicationFieldHighlights()
         applyExibirPeca(id, true)
@@ -3979,6 +4077,11 @@ export function PecasTable({
 
     if (cdata.exibir_no_site) {
       applyExibirConjunto(conjuntoId, false)
+      return
+    }
+
+    if (!conjuntoTemFoto(cdata)) {
+      openSemFotoPublicacao({ type: 'conjunto', id: conjuntoId })
       return
     }
 
@@ -4012,6 +4115,7 @@ export function PecasTable({
         if (first) focusPublicationFieldsInModal(first.id, missing, editModal === first.id)
       },
       onProceed: () => {
+        if (missing.fields.includes('foto')) return
         setPublicationWarning(null)
         clearPublicationFieldHighlights()
         applyExibirConjunto(conjuntoId, true)
@@ -4851,6 +4955,10 @@ export function PecasTable({
   function promptPublishPeca(id: string) {
     const row = rows.find((r) => r.id === id)
     if (!row) return
+    if (!pecaTemFoto(row)) {
+      openSemFotoPublicacao({ type: 'peca', id })
+      return
+    }
     const { custoTotal } = calcRowCosts(
       row, custoHoraMO, custoHoraFixo,
       embalagemItems, argilaItems, esmalteItems, engobeItems, tintaItems, biscoitoItems, queimaAltaItems,
@@ -4864,6 +4972,7 @@ export function PecasTable({
           focusPublicationFieldsInModal(id, missing, editModal === id)
         },
         onProceed: () => {
+          if (missing.fields.includes('foto')) return
           setPublicationWarning(null)
           clearPublicationFieldHighlights()
           finishPublishPeca(id).catch((e) => setModalSaveError(e instanceof Error ? e.message : 'Erro ao publicar'))
@@ -4876,6 +4985,10 @@ export function PecasTable({
 
   function promptPublishConjunto(conjuntoId: string) {
     const cdata = conjuntosData.get(conjuntoId) ?? defaultConjuntoData()
+    if (!conjuntoTemFoto(cdata)) {
+      openSemFotoPublicacao({ type: 'conjunto', id: conjuntoId })
+      return
+    }
     const pieces = getConjuntoPiecesFromRows(rows, conjuntoId, conjuntoLinks)
     const ref = pieces[0]
     const pricing = calcConjuntoPricing(
@@ -4902,6 +5015,7 @@ export function PecasTable({
           if (first) focusPublicationFieldsInModal(first.id, missing, editModal === first.id)
         },
         onProceed: () => {
+          if (missing.fields.includes('foto')) return
           setPublicationWarning(null)
           clearPublicationFieldHighlights()
           finishPublishConjunto(conjuntoId).catch((e) => setModalSaveError(e instanceof Error ? e.message : 'Erro ao publicar'))
@@ -4988,8 +5102,21 @@ export function PecasTable({
     if (!exibirSitePrompt) return
     const prompt = exibirSitePrompt
     setExibirSitePrompt(null)
-    if (prompt.type === 'peca') promptPublishPeca(prompt.id)
-    else promptPublishConjunto(prompt.id)
+    if (prompt.type === 'peca') {
+      const row = rows.find((r) => r.id === prompt.id)
+      if (!row || !pecaTemFoto(row)) {
+        openSemFotoPublicacao({ type: 'peca', id: prompt.id })
+        return
+      }
+      promptPublishPeca(prompt.id)
+    } else {
+      const cdata = conjuntosData.get(prompt.id) ?? defaultConjuntoData()
+      if (!conjuntoTemFoto(cdata)) {
+        openSemFotoPublicacao({ type: 'conjunto', id: prompt.id })
+        return
+      }
+      promptPublishConjunto(prompt.id)
+    }
   }
 
   function handleExibirSiteNao() {
@@ -5001,6 +5128,12 @@ export function PecasTable({
     const codigoErr = validateAllCodigosBeforeSave()
     if (codigoErr) {
       setSaveError(codigoErr)
+      setSaveStatus('error')
+      return
+    }
+    const fotoErr = validateExibirNoSiteFotoBeforeSave()
+    if (fotoErr) {
+      setSaveError(fotoErr)
       setSaveStatus('error')
       return
     }
@@ -5740,6 +5873,13 @@ export function PecasTable({
           onAdjust={publicationWarning.onAdjust}
           onProceed={publicationWarning.onProceed}
           onCancel={() => setPublicationWarning(null)}
+        />
+      )}
+
+      {semFotoPublicacao && (
+        <SemFotoPublicacaoModal
+          onClose={() => setSemFotoPublicacao(null)}
+          onAdjust={() => focusFotoFieldForPublicacao(semFotoPublicacao)}
         />
       )}
 
