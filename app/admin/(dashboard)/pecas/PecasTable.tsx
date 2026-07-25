@@ -2947,6 +2947,7 @@ export function PecasTable({
   const [semFotoPublicacao, setSemFotoPublicacao] = useState<
     { type: 'peca'; id: string } | { type: 'conjunto'; id: string } | null
   >(null)
+  const [exibirSitePersisting, setExibirSitePersisting] = useState<string | null>(null)
   const [publicationWarning, setPublicationWarning] = useState<{
     missingFields: PublicationFieldKey[]
     onAdjust: () => void
@@ -4020,25 +4021,99 @@ export function PecasTable({
     return null
   }
 
-  function applyExibirPeca(id: string, value: boolean) {
-    const row = rows.find((r) => r.id === id)
-    if (!row) return
-    setDestaqueLimitMsg(null)
-    update(id, { exibir_no_site: value, destaque_home: value ? row.destaque_home : false })
+  async function commitExibirPeca(id: string, value: boolean) {
+    let previous: PecaRow | undefined
+    setRows((prev) => {
+      previous = prev.find((r) => r.id === id)
+      if (!previous || previous.conjunto_id) return prev
+      return prev.map((r) => r.id === id
+        ? { ...r, exibir_no_site: value, destaque_home: value ? r.destaque_home : false }
+        : r)
+    })
+    if (!previous || previous.conjunto_id) return
+
+    const rowToPersist: PecaRow = {
+      ...previous,
+      exibir_no_site: value,
+      destaque_home: value ? previous.destaque_home : false,
+    }
+
+    setExibirSitePersisting(id)
+    setSaveError(null)
+    try {
+      const supabase = createClient()
+      const allFotos = await persistPecaRow(supabase, rowToPersist)
+      setRows((prev) => prev.map((r) => r.id === id
+        ? {
+          ...rowToPersist,
+          fotos: allFotos,
+          fotosNovas: [],
+          novaPrincipal: false,
+          dirty: false,
+        }
+        : r))
+      setSaveStatus('ok')
+      setTimeout(() => setSaveStatus('idle'), 2500)
+    } catch (err) {
+      setRows((prev) => prev.map((r) => r.id === id ? previous! : r))
+      setSaveError(err instanceof Error ? err.message : 'Erro ao atualizar exibição no site')
+      setSaveStatus('error')
+    } finally {
+      setExibirSitePersisting(null)
+    }
   }
 
-  function applyExibirConjunto(conjuntoId: string, value: boolean) {
-    const cdata = conjuntosData.get(conjuntoId) ?? defaultConjuntoData()
-    setDestaqueLimitMsg(null)
-    updateConjuntoData(conjuntoId, { exibir_no_site: value, destaque_home: value ? cdata.destaque_home : false })
+  async function commitExibirConjunto(conjuntoId: string, value: boolean) {
+    const previous = conjuntosData.get(conjuntoId) ?? defaultConjuntoData()
+    const updatedCdata: ConjuntoData = {
+      ...previous,
+      exibir_no_site: value,
+      destaque_home: value ? previous.destaque_home : false,
+    }
+    setConjuntosData((prev) => {
+      const next = new Map(prev)
+      next.set(conjuntoId, updatedCdata)
+      return next
+    })
+
+    const pieces = getConjuntoPiecesFromRows(rows, conjuntoId, conjuntoLinks)
+    setExibirSitePersisting(conjuntoId)
+    setSaveError(null)
+    try {
+      const supabase = createClient()
+      const allFotos = await persistConjunto(supabase, conjuntoId, updatedCdata, pieces)
+      setConjuntosData((prev) => {
+        const next = new Map(prev)
+        next.set(conjuntoId, {
+          ...updatedCdata,
+          fotos: allFotos,
+          fotosNovas: [],
+          novaPrincipal: false,
+          dirty: false,
+        })
+        return next
+      })
+      setSaveStatus('ok')
+      setTimeout(() => setSaveStatus('idle'), 2500)
+    } catch (err) {
+      setConjuntosData((prev) => {
+        const next = new Map(prev)
+        next.set(conjuntoId, previous)
+        return next
+      })
+      setSaveError(err instanceof Error ? err.message : 'Erro ao atualizar exibição no site')
+      setSaveStatus('error')
+    } finally {
+      setExibirSitePersisting(null)
+    }
   }
 
   function requestExibirPeca(id: string) {
     const row = rows.find((r) => r.id === id)
-    if (!row) return
+    if (!row || exibirSitePersisting === id) return
 
     if (row.exibir_no_site) {
-      applyExibirPeca(id, false)
+      void commitExibirPeca(id, false)
       return
     }
 
@@ -4053,7 +4128,7 @@ export function PecasTable({
     )
     const missing = getMissingPublicationFieldsPeca(row, custoTotal, margemVendaConfig)
     if (missing.fields.length === 0) {
-      applyExibirPeca(id, true)
+      void commitExibirPeca(id, true)
       return
     }
 
@@ -4067,16 +4142,17 @@ export function PecasTable({
         if (missing.fields.includes('foto')) return
         setPublicationWarning(null)
         clearPublicationFieldHighlights()
-        applyExibirPeca(id, true)
+        void commitExibirPeca(id, true)
       },
     })
   }
 
   function requestExibirConjunto(conjuntoId: string) {
+    if (exibirSitePersisting === conjuntoId) return
     const cdata = conjuntosData.get(conjuntoId) ?? defaultConjuntoData()
 
     if (cdata.exibir_no_site) {
-      applyExibirConjunto(conjuntoId, false)
+      void commitExibirConjunto(conjuntoId, false)
       return
     }
 
@@ -4103,7 +4179,7 @@ export function PecasTable({
       pricing.totalArgilaKg,
     )
     if (missing.fields.length === 0) {
-      applyExibirConjunto(conjuntoId, true)
+      void commitExibirConjunto(conjuntoId, true)
       return
     }
 
@@ -4118,7 +4194,7 @@ export function PecasTable({
         if (missing.fields.includes('foto')) return
         setPublicationWarning(null)
         clearPublicationFieldHighlights()
-        applyExibirConjunto(conjuntoId, true)
+        void commitExibirConjunto(conjuntoId, true)
       },
     })
   }
@@ -5489,7 +5565,8 @@ export function PecasTable({
                     <td className="px-1 py-2 text-center border-l border-pedra/30">
                       <div className="flex flex-col items-center gap-0.5">
                         <button type="button" onClick={() => requestExibirConjunto(item.conjuntoId)}
-                          className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${cdata.exibir_no_site ? 'bg-terracota' : 'bg-pedra/50'}`}>
+                          disabled={exibirSitePersisting === item.conjuntoId}
+                          className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none disabled:opacity-50 ${cdata.exibir_no_site ? 'bg-terracota' : 'bg-pedra/50'}`}>
                           <span className={`pointer-events-none inline-block h-3 w-3 rounded-full bg-white shadow transform transition-transform ${cdata.exibir_no_site ? 'translate-x-3' : 'translate-x-0'}`} />
                         </button>
                         {cdata.exibir_no_site && <span className="font-sans text-[7px] text-terracota tracking-wide uppercase leading-none">Sim</span>}
@@ -5707,7 +5784,8 @@ export function PecasTable({
                     {inConjunto ? <div className="flex justify-center">{conjuntoManagedCell}</div> : (
                       <div className="flex flex-col items-center gap-0.5">
                         <button type="button" onClick={() => requestExibirPeca(row.id)}
-                          className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${row.exibir_no_site ? 'bg-terracota' : 'bg-pedra/50'}`}>
+                          disabled={exibirSitePersisting === row.id}
+                          className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none disabled:opacity-50 ${row.exibir_no_site ? 'bg-terracota' : 'bg-pedra/50'}`}>
                           <span className={`pointer-events-none inline-block h-3 w-3 rounded-full bg-white shadow transform transition-transform ${row.exibir_no_site ? 'translate-x-3' : 'translate-x-0'}`} />
                         </button>
                         {row.exibir_no_site && <span className="font-sans text-[7px] text-terracota tracking-wide uppercase leading-none">Sim</span>}
