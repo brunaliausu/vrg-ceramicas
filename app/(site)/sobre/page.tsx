@@ -1,49 +1,13 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import Image from 'next/image'
 import { getSobreConteudo } from '@/lib/conteudo'
+import { CmsImage } from '@/components/site/CmsImage'
 import { ArtistaHistorias } from '@/components/sections/ArtistaHistorias'
 
 export const metadata: Metadata = {
   title: 'A Artista',
   description:
     'Conheça a história da VRG Cerâmicas Artesanais — a ceramista, o ateliê e a paixão pelo feito à mão.',
-}
-
-function CmsImage({
-  src,
-  alt,
-  fill,
-  className,
-  sizes,
-}: {
-  src: string
-  alt: string
-  fill?: boolean
-  className?: string
-  sizes?: string
-}) {
-  if (!src) return null
-  if (fill) {
-    return (
-      <Image
-        src={src}
-        alt={alt}
-        fill
-        className={className ?? 'object-cover'}
-        sizes={sizes ?? '(max-width:768px) 100vw, 50vw'}
-      />
-    )
-  }
-  return (
-    <Image
-      src={src}
-      alt={alt}
-      width={900}
-      height={1200}
-      className={className ?? 'w-full h-full object-cover'}
-    />
-  )
 }
 
 export default async function SobrePage() {
@@ -80,7 +44,7 @@ export default async function SobrePage() {
         {/* Image */}
         <div className="relative min-h-[56vh] lg:min-h-full order-1 lg:order-2 overflow-hidden bg-areia">
           {c.hero_imagem ? (
-            <CmsImage src={c.hero_imagem} alt={c.carta_assinatura} fill className="object-cover" />
+            <CmsImage src={c.hero_imagem} alt={c.carta_assinatura} fill className="object-cover" priority />
           ) : (
             <div className="absolute inset-0 flex items-center justify-center">
               <p className="font-sans text-xs text-muted/40">[ Foto da artista ]</p>

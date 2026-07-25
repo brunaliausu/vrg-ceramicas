@@ -2,6 +2,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { StatusBadge } from '@/components/ui/StatusBadge'
 import { formatCategoriaDisplay } from '@/lib/categoriaLoja'
+import { shouldUnoptimizeImage } from '@/lib/imageUtils'
 import type { Produto } from '@/types'
 
 interface ProductCardProps {
@@ -25,6 +26,7 @@ export function ProductCard({ produto, categoriaExibicao }: ProductCardProps) {
             src={imagem}
             alt={nome}
             fill
+            unoptimized={shouldUnoptimizeImage(imagem)}
             sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
             className="object-cover transition-transform duration-700 group-hover:scale-105"
           />

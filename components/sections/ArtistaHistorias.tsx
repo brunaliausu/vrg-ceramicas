@@ -1,4 +1,4 @@
-import Image from 'next/image'
+import { CmsImage } from '@/components/site/CmsImage'
 import type { SobreConteudo } from '@/types'
 
 interface Momento {
@@ -27,7 +27,7 @@ function MomentoImagem({ src, alt }: { src: string; alt: string }) {
     )
   }
   return (
-    <Image
+    <CmsImage
       src={src}
       alt={alt}
       fill

@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import Image from 'next/image'
+import { shouldUnoptimizeImage } from '@/lib/imageUtils'
 
 interface ProductGalleryProps {
   imagens: string[]
@@ -28,6 +29,7 @@ export function ProductGallery({ imagens, nome }: ProductGalleryProps) {
           alt={`${nome} — foto ${ativa + 1}`}
           fill
           priority
+          unoptimized={shouldUnoptimizeImage(imagens[ativa])}
           sizes="(max-width: 768px) 100vw, 50vw"
           className="object-cover"
         />
@@ -48,6 +50,7 @@ export function ProductGallery({ imagens, nome }: ProductGalleryProps) {
                 src={img}
                 alt={`${nome} — miniatura ${i + 1}`}
                 fill
+                unoptimized={shouldUnoptimizeImage(img)}
                 sizes="100px"
                 className="object-cover"
               />

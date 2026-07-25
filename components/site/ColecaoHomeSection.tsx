@@ -1,26 +1,8 @@
 import Link from 'next/link'
-import Image from 'next/image'
 import { colecaoHref, type ColecaoDB } from '@/lib/colecaoUtils'
+import { CmsImage } from '@/components/site/CmsImage'
 import { ProductCard } from '@/components/product/ProductCard'
 import type { Produto } from '@/types'
-
-function CmsImage({
-  src,
-  alt,
-  className,
-  fill = false,
-}: {
-  src: string
-  alt: string
-  className?: string
-  fill?: boolean
-}) {
-  if (!src) return null
-  if (fill) {
-    return <Image src={src} alt={alt} fill className={className ?? 'object-cover'} sizes="(max-width:768px) 100vw, 50vw" />
-  }
-  return <Image src={src} alt={alt} width={900} height={1200} className={className ?? 'w-full h-full object-cover'} />
-}
 
 interface Props {
   colecao: ColecaoDB

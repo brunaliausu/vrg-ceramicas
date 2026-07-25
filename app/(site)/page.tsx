@@ -1,8 +1,8 @@
 import { createClient } from '@/lib/supabase/server'
 import Link from 'next/link'
-import Image from 'next/image'
 import { getHomeConteudo } from '@/lib/conteudo'
 import { colecaoHref, slugifyColecao } from '@/lib/colecaoUtils'
+import { CmsImage } from '@/components/site/CmsImage'
 import { ProductCard } from '@/components/product/ProductCard'
 import type { Produto } from '@/types'
 
@@ -39,24 +39,6 @@ async function getProdutosColecao(colecao: string): Promise<Produto[]> {
   }
 }
 
-function CmsImage({
-  src,
-  alt,
-  className,
-  fill = false,
-}: {
-  src: string
-  alt: string
-  className?: string
-  fill?: boolean
-}) {
-  if (!src) return null
-  if (fill) {
-    return <Image src={src} alt={alt} fill className={className ?? 'object-cover'} sizes="(max-width:768px) 100vw, 50vw" />
-  }
-  return <Image src={src} alt={alt} width={900} height={1200} className={className ?? 'w-full h-full object-cover'} />
-}
-
 export default async function HomePage() {
   const c = await getHomeConteudo()
   const colecaoSlug = slugifyColecao(c.colecao_titulo)
@@ -71,7 +53,7 @@ export default async function HomePage() {
       <section className="relative h-screen min-h-[680px] overflow-hidden flex items-center bg-carvao">
         <div className="absolute inset-0">
           {c.hero_imagem ? (
-            <CmsImage src={c.hero_imagem} alt="VRG Cerâmicas" fill className="object-cover" />
+            <CmsImage src={c.hero_imagem} alt="VRG Cerâmicas" fill className="object-cover" priority />
           ) : (
             <div className="absolute inset-0 bg-areia" />
           )}

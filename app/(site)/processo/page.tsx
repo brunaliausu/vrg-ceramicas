@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
-import Image from 'next/image'
 import { getProcessoConteudo } from '@/lib/conteudo'
+import { CmsImage } from '@/components/site/CmsImage'
 
 export const metadata: Metadata = {
   title: 'O Processo',
@@ -17,7 +17,7 @@ function EtapaImagem({ src, alt }: { src: string; alt: string }) {
   }
   return (
     <div className="relative mt-6 aspect-video overflow-hidden bg-areia">
-      <Image src={src} alt={alt} fill className="object-cover" sizes="(max-width:768px) 100vw, 768px" />
+      <CmsImage src={src} alt={alt} fill className="object-cover" sizes="(max-width:768px) 100vw, 768px" />
     </div>
   )
 }
